@@ -15,5 +15,5 @@
 
 - 本機沒有 `ANTHROPIC_API_KEY`，所以沒有付費執行真實 Agent SDK 模型呼叫；已驗證 SDK 套件載入、mock 執行與「不得借用 claude.ai 訂閱」的拒絕路徑。
 - Claude Code 的本機 OAuth 已過期，因此模型對話 E2E 回傳 `Failed to authenticate: OAuth session expired and could not be refreshed`；Plugin 本身在 `claude plugin list` 顯示 1.0.4、enabled，manifest、Skills、Hook 與 MCP 組件可載入。
-- Windows 實機結果以 GitHub Actions 的 `windows-latest` 工作為準；工作流會安裝真實 Codex／Claude Code CLI 並執行 Windows PowerShell 一鍵安裝器。Release 前須確認該工作為綠色。
+- GitHub Actions `windows-latest` 與 `macos-latest` 均已通過：兩邊都安裝真實 Codex／Claude Code CLI、驗證 manifest，並執行對應的一鍵安裝器。通過紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35630995512>。
 - ChatGPT Desktop 與 Claude Desktop 沒有提供等同本機 CLI Marketplace 的無互動安裝介面；安裝器只會使用官方支援的 Codex CLI 與 Claude Code Plugin 管理器，並清楚報告桌面應用程式偵測結果。
