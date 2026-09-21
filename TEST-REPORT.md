@@ -17,5 +17,5 @@
 
 - 本版已完全移除 Anthropic Claude Agent SDK 與 `ANTHROPIC_API_KEY` 路徑；Agent 只由目前 Codex／Claude Code Session 執行。
 - OAuth 瀏覽器頁面需要使用者親自輸入帳密，CI 以跨平台假宿主驗證「狀態檢查 → 啟動登入 → 再次檢查 → 才安裝」控制流程，不會自動填寫或保存真實密碼。
-- GitHub Actions `windows-latest` 與 `macos-latest` 均已通過：兩邊都安裝真實 Codex／Claude Code CLI、驗證 manifest，並執行對應的一鍵安裝器。通過紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35631439874>。
+- GitHub Actions `windows-latest` 與 `macos-latest` 均已通過：兩邊都安裝真實 Codex／Claude Code CLI、驗證 manifest，並執行對應的一鍵安裝器。通過紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35633143320>。
 - ChatGPT Desktop 與 Claude Desktop 沒有提供等同本機 CLI Marketplace 的無互動安裝介面；安裝器只會使用官方支援的 Codex CLI 與 Claude Code Plugin 管理器，並清楚報告桌面應用程式偵測結果。
