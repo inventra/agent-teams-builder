@@ -1,0 +1,20 @@
+{
+  "name": "agent-teams-local",
+  "interface": {
+    "displayName": "Agent Teams Local"
+  },
+  "plugins": [
+    {
+      "name": "agent-teams-builder",
+      "source": {
+        "source": "local",
+        "path": "./plugins/agent-teams-builder"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

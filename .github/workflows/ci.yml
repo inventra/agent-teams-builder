@@ -1,0 +1,44 @@
+name: Cross-platform plugin test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-and-install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/agent-teams-builder/package-lock.json
+      - name: Install plugin runtime dependencies
+        run: npm ci --prefix plugins/agent-teams-builder --no-audit --no-fund
+      - name: Run automated tests
+        run: npm test
+      - name: Install real host CLIs
+        run: npm install --global @openai/codex @anthropic-ai/claude-code
+      - name: Validate Claude Code manifest
+        run: claude plugin validate plugins/agent-teams-builder --strict --json
+      - name: Run one-click installer on macOS
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          export AGENT_TEAMS_INSTALL_ROOT="$RUNNER_TEMP/Agent Teams"
+          ./install.command
+          codex plugin list | grep 'agent-teams-builder@agent-teams-local'
+          claude plugin list | grep 'agent-teams-builder@agent-teams-local'
+      - name: Run one-click installer on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $env:AGENT_TEAMS_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP "Agent Teams"
+          powershell -ExecutionPolicy Bypass -File .\Install-Agent-Builder.ps1
+          codex plugin list | Select-String 'agent-teams-builder@agent-teams-local'
+          claude plugin list | Select-String 'agent-teams-builder@agent-teams-local'

@@ -1,0 +1,10 @@
+{
+  "name": "agent-teams-builder-release",
+  "version": "1.0.3",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.mjs && npm --prefix plugins/agent-teams-builder test",
+    "validate": "claude plugin validate plugins/agent-teams-builder --strict"
+  }
+}
