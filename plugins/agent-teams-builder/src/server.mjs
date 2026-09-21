@@ -4,7 +4,6 @@ import { z } from "zod";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun } from "./store.mjs";
-import { runWithClaudeAgentSdk } from "./sdk-runner.mjs";
 
 const skillSchema = z.object({
   id: z.string(),
@@ -39,7 +38,7 @@ function safe(handler) {
 }
 
 export function buildServer() {
-  const server = new McpServer({ name: "agent-teams-builder", version: "1.0.4" });
+  const server = new McpServer({ name: "agent-teams-builder", version: "1.1.0" });
   server.registerTool("agent_preview", {
     title: "Preview Agent creation or update",
     description: "Validate and preview a complete Agent definition. This does not create or modify the Agent. Show the preview to the user and ask for explicit confirmation before calling agent_commit.",
@@ -65,17 +64,11 @@ export function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
   }, safe(({ agent }) => getAgent(agent)));
   server.registerTool("agent_prepare_run", {
-    title: "Prepare host execution",
-    description: "Resolve an Agent and Skill and return the exact prompt/SOP for execution with the current host session's tools.",
+    title: "Prepare current-host execution",
+    description: "Resolve an Agent and Skill and return the exact prompt/SOP for execution by the current Codex or Claude Code session. The plugin never calls a separate model API.",
     inputSchema: { agent: z.string(), task: z.string(), skill: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
   }, safe(prepareRun));
-  server.registerTool("agent_run_sdk", {
-    title: "Run through Anthropic Claude Agent SDK",
-    description: "Execute a saved Agent with the Anthropic Claude Agent SDK. Requires ANTHROPIC_API_KEY or supported provider credentials. Prefer agent_prepare_run when the current host must provide Computer Use or Browser tools.",
-    inputSchema: { agent: z.string(), task: z.string(), skill: z.string().optional() },
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
-  }, safe(runWithClaudeAgentSdk));
   return server;
 }
 

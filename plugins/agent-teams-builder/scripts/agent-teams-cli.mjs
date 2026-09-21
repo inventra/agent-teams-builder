@@ -3,7 +3,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureAgentTeamsRoot, getAgent, listAgents, prepareRun } from "../src/store.mjs";
-import { runWithClaudeAgentSdk } from "../src/sdk-runner.mjs";
 
 const command = process.argv[2] || "help";
 const args = process.argv.slice(3);
@@ -24,9 +23,10 @@ if (command === "doctor") {
     root,
     node: process.version,
     platform: `${process.platform}-${process.arch}`,
-    claudeAgentSdk: packageVersion("@anthropic-ai/claude-agent-sdk"),
     mcpSdk: packageVersion("@modelcontextprotocol/sdk"),
-    sdkCredentialConfigured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_CODE_USE_BEDROCK || process.env.CLAUDE_CODE_USE_VERTEX || process.env.CLAUDE_CODE_USE_FOUNDRY || process.env.CLAUDE_CODE_USE_ANTHROPIC_AWS),
+    executionMode: "current-host",
+    supportedHosts: ["codex", "claude-code"],
+    modelApiRequired: false,
     agentCount: listAgents().length
   });
 } else if (command === "list") {
@@ -35,8 +35,6 @@ if (command === "doctor") {
   output(getAgent(args.join(" ")));
 } else if (command === "prepare") {
   output(prepareRun({ agent: args[0], task: args.slice(1).join(" ") }));
-} else if (command === "run") {
-  output(await runWithClaudeAgentSdk({ agent: args[0], task: args.slice(1).join(" ") }));
 } else {
-  process.stdout.write("Agent Teams CLI\n\nCommands: doctor | list | get <agent> | prepare <agent> <task> | run <agent> <task>\n");
+  process.stdout.write("Agent Teams CLI\n\nCommands: doctor | list | get <agent> | prepare <agent> <task>\n");
 }

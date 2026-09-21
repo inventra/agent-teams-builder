@@ -41,6 +41,15 @@ function commandResult(command, args = [], options = {}) {
   };
 }
 
+function interactiveCommand(command, args = []) {
+  const result = spawnSync(command, args, {
+    shell: process.platform === "win32",
+    windowsHide: false,
+    stdio: "inherit"
+  });
+  return { ok: result.status === 0, status: result.status, error: result.error?.message || null };
+}
+
 function hostCommand(name) {
   return process.platform === "win32" ? `${name}.cmd` : name;
 }
@@ -48,6 +57,48 @@ function hostCommand(name) {
 function available(command) {
   const probe = commandResult(command, ["--version"]);
   return probe.ok ? probe.stdout || probe.stderr : null;
+}
+
+function codexAuthStatus() {
+  const check = commandResult(hostCommand("codex"), ["login", "status"]);
+  const method = check.ok ? (check.stdout.match(/Logged in using\s+(.+)/i)?.[1]?.trim() || "ChatGPT") : null;
+  return { loggedIn: check.ok, method, command: "codex login status" };
+}
+
+function claudeAuthStatus() {
+  const check = commandResult(hostCommand("claude"), ["auth", "status", "--json"]);
+  let parsed = null;
+  try { parsed = JSON.parse(check.stdout); } catch {}
+  return {
+    loggedIn: parsed?.loggedIn === true,
+    method: parsed?.loggedIn ? (parsed.authMethod || "Claude account") : null,
+    command: "claude auth status --json"
+  };
+}
+
+function ensureHostAuthentication(host, { skipLogin = false } = {}) {
+  const status = host === "codex" ? codexAuthStatus : claudeAuthStatus;
+  const before = status();
+  if (before.loggedIn) return { ...before, loginRequired: false, loginAttempted: false, skipped: false };
+  if (skipLogin) return { ...before, loginRequired: true, loginAttempted: false, skipped: true };
+
+  const loginCommand = host === "codex"
+    ? { command: hostCommand("codex"), args: ["login"], display: "codex login" }
+    : { command: hostCommand("claude"), args: ["auth", "login", "--claudeai"], display: "claude auth login --claudeai" };
+  console.log(`\n${host === "codex" ? "Codex" : "Claude Code"} 尚未登入。即將執行 ${loginCommand.display}；請在開啟的瀏覽器中完成帳號登入。\n`);
+  const login = interactiveCommand(loginCommand.command, loginCommand.args);
+  const after = status();
+  return {
+    loggedIn: after.loggedIn,
+    method: after.method,
+    command: before.command,
+    loginRequired: true,
+    loginAttempted: true,
+    loginCommand: loginCommand.display,
+    loginProcessSucceeded: login.ok,
+    skipped: false,
+    error: after.loggedIn ? null : (login.error || "Browser login was not completed successfully")
+  };
 }
 
 export function detectDesktopApps(platform = process.platform, env = process.env) {
@@ -138,10 +189,22 @@ export function install(options = {}) {
   };
   const compatibleHost = compatibility.codex?.compatible || compatibility.claude?.compatible;
   if (!compatibleHost) throw new Error(`Installed hosts are too old. Minimums: Codex ${MINIMUMS.codex}, Claude Code ${MINIMUMS.claude}`);
+  const skipLogin = options.skipLogin || process.env.AGENT_TEAMS_SKIP_LOGIN === "1";
+  const authentication = {};
+  if (compatibility.codex?.compatible) authentication.codex = ensureHostAuthentication("codex", { skipLogin });
+  if (compatibility.claude?.compatible) authentication.claude = ensureHostAuthentication("claude", { skipLogin });
   const backup = copyRelease(sourceRoot, marketplaceRoot, options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1");
   const results = {};
-  if (compatibility.codex?.compatible) results.codex = configureCodex(marketplaceRoot);
-  if (compatibility.claude?.compatible) results.claude = configureClaude(marketplaceRoot);
+  if (compatibility.codex?.compatible) {
+    results.codex = authentication.codex.loggedIn || authentication.codex.skipped
+      ? configureCodex(marketplaceRoot)
+      : { installed: false, error: "Codex login was not completed; run codex login and retry." };
+  }
+  if (compatibility.claude?.compatible) {
+    results.claude = authentication.claude.loggedIn || authentication.claude.skipped
+      ? configureClaude(marketplaceRoot)
+      : { installed: false, error: "Claude Code login was not completed; run claude auth login --claudeai and retry." };
+  }
   const pluginRoot = path.join(marketplaceRoot, "plugins", PLUGIN);
   let doctor = { ok: false, error: "skipped" };
   if (!(options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1")) {
@@ -163,11 +226,13 @@ export function install(options = {}) {
     backupRemoved,
     detected,
     compatibility,
+    authentication,
     results,
     doctor,
     notes: [
       "Claude Desktop is detected separately; Claude Code CLI is the supported local plugin host used by this installer.",
       "ChatGPT Desktop and Codex share the public plugin directory, but local CLI marketplace installation requires Codex CLI.",
+      "Agent execution always uses the current Codex or Claude Code host. No Anthropic/OpenAI model API key is used by the plugin.",
       "Start a new Claude Code/Codex session after installation."
     ]
   };

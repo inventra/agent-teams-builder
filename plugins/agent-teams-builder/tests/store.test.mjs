@@ -4,7 +4,6 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { commitPreview, createPreview, getAgent, listAgents, prepareRun } from "../src/store.mjs";
-import { runWithClaudeAgentSdk } from "../src/sdk-runner.mjs";
 
 function spec(overrides = {}) {
   return {
@@ -35,7 +34,6 @@ test.beforeEach(() => {
 test.afterEach(() => {
   fs.rmSync(process.env.AGENT_TEAMS_HOME, { recursive: true, force: true });
   delete process.env.AGENT_TEAMS_HOME;
-  delete process.env.AGENT_TEAMS_SDK_MOCK;
 });
 
 test("requires preview then explicit commit and writes full Agent structure", () => {
@@ -97,26 +95,13 @@ test("rejects ambiguous confirmation and likely secrets", () => {
   assert.throws(() => createPreview({ action: "create", spec: spec({ memory: "sk-ant-this-is-a-secret-token-123456" }) }), /Potential secret/);
 });
 
-test("routes a task to the matching skill and supports SDK mock", async () => {
+test("routes a task to the matching skill for current-host execution", () => {
   const preview = createPreview({ action: "create", spec: spec() });
   commitPreview({ token: preview.token, userConfirmation: "確認" });
   const prepared = prepareRun({ agent: "航班查詢機器人", task: "幫我查班機" });
   assert.equal(prepared.skill.id, "search-flights");
-  process.env.AGENT_TEAMS_SDK_MOCK = "1";
-  const run = await runWithClaudeAgentSdk({ agent: "小美", task: "曼谷到新加坡" });
-  assert.equal(run.mode, "sdk-mock");
-  assert.match(run.result, /曼谷到新加坡/);
-});
-
-test("SDK mode refuses to borrow a Claude subscription when no API credential exists", async () => {
-  const preview = createPreview({ action: "create", spec: spec() });
-  commitPreview({ token: preview.token, userConfirmation: "確認" });
-  const variables = ["ANTHROPIC_API_KEY", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_ANTHROPIC_AWS"];
-  const before = Object.fromEntries(variables.map((key) => [key, process.env[key]]));
-  for (const key of variables) delete process.env[key];
-  try {
-    await assert.rejects(() => runWithClaudeAgentSdk({ agent: "小美", task: "測試" }), /requires ANTHROPIC_API_KEY/);
-  } finally {
-    for (const key of variables) if (before[key] !== undefined) process.env[key] = before[key];
-  }
+  assert.equal(prepared.execution.mode, "current-host");
+  assert.deepEqual(prepared.execution.supportedHosts, ["codex", "claude-code"]);
+  assert.match(prepared.execution.instruction, /Do not call a separate model API/);
+  assert.equal(prepared.agent.framework.modelApiRequired, false);
 });

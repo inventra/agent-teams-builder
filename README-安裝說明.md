@@ -13,7 +13,10 @@
 2. 建立 `下載/Agent Teams`。
 3. 把 Plugin 與 Runtime 安裝到 `下載/Agent Teams/.system/marketplace`。
 4. 若同時找到 Claude Code 與 Codex CLI，兩邊都安裝；只找到其中一個，就安裝到該環境。
-5. 產生 `下載/Agent Teams/installation-report.json`，記錄實際偵測、版本、安裝與 Doctor 結果。
+5. 檢查宿主登入狀態。Codex 使用 `codex login status`；Claude Code 使用 `claude auth status --json`。
+6. 若尚未登入，執行 `codex login` 或 `claude auth login --claudeai`，開啟官方瀏覽器頁面讓使用者自行登入。Plugin 不讀取或保存帳號密碼。
+7. 只有登入完成的宿主才會回報安裝成功。
+8. 產生 `下載/Agent Teams/installation-report.json`，記錄實際偵測、版本、登入、安裝與 Doctor 結果。
 
 安裝後請開新的 Session，說：「列出我的 Agent Teams」或「把目前流程建立成 Agent 小美，用途是查詢航班」。
 
@@ -21,7 +24,7 @@
 
 - Claude Desktop 應用程式本身與 Claude Code Plugin 是不同介面。本安裝器會偵測 Claude Desktop，但本機 Plugin 的正式安裝目標是 Claude Code CLI。
 - ChatGPT Desktop／Codex 共用公開 Plugin 目錄，但本機 Marketplace 的自動安裝需要 Codex CLI；只有 ChatGPT Desktop、沒有 Codex CLI 時，安裝器會清楚報告未安裝，不會假裝成功。
-- Anthropic Claude Agent SDK 的獨立執行模式必須使用 `ANTHROPIC_API_KEY` 或官方支援的雲端供應商認證。依 Anthropic 政策，本工具不會轉用使用者的 claude.ai 登入或訂閱額度。沒有 API Key 時，仍可使用目前 Claude Code／Codex Session 的 host 模式。
+- Agent 永遠在目前宿主執行：Codex Session 由 Codex 執行，Claude Code Session 由 Claude Code 執行。本 Plugin 不使用 Anthropic API、OpenAI API 或獨立 Agent SDK。
 - 本機 stdio MCP 適用 Claude Code 與 Codex。要公開提交到 ChatGPT Plugin Directory，MCP Server 需另行部署成穩定的 HTTPS 服務並完成官方審核；這個 ZIP 不會假裝已完成公開上架。
 
 ## 使用範例

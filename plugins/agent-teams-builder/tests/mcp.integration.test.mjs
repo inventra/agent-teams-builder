@@ -20,7 +20,7 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "agent_run_sdk"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview"]);
     const preview = await client.callTool({
       name: "agent_preview",
       arguments: {
@@ -64,6 +64,7 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
     assert.equal(listed.structuredContent.agents[0].skills.length, 2);
     const prepared = await client.callTool({ name: "agent_prepare_run", arguments: { agent: "小編", task: "幫我找關鍵字" } });
     assert.equal(prepared.structuredContent.skill.id, "find-keywords");
+    assert.equal(prepared.structuredContent.execution.mode, "current-host");
   } finally {
     await client.close();
     fs.rmSync(temporary, { recursive: true, force: true });

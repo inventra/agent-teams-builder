@@ -1,9 +1,9 @@
 {
   "name": "agent-teams-builder-runtime",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
-  "description": "Local MCP and Anthropic Claude Agent SDK runtime for Agent Teams Builder",
+  "description": "Local MCP runtime for host-native Agent execution in Codex and Claude Code",
   "engines": {
     "node": ">=18"
   },
@@ -12,7 +12,6 @@
     "doctor": "node scripts/agent-teams-cli.mjs doctor"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.75",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "zod": "^4.0.0"
   }

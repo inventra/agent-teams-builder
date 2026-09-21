@@ -124,9 +124,10 @@ export function normalizeSpec(raw, previous = null) {
     createdAt: previous?.createdAt || now,
     updatedAt: now,
     framework: {
-      name: "Anthropic Claude Agent SDK",
-      package: "@anthropic-ai/claude-agent-sdk",
-      executionModes: ["host", "sdk"]
+      name: "Host-native Agent Plugin",
+      executionMode: "current-host",
+      supportedHosts: ["codex", "claude-code"],
+      modelApiRequired: false
     },
     systemPrompt: cleanString(raw.systemPrompt, "systemPrompt", 12000),
     memory: cleanString(raw.memory || "尚無長期記憶。", "memory", 20000),
@@ -345,7 +346,17 @@ export function prepareRun({ agent: reference, task, skill: requestedSkill }) {
     "",
     `使用者任務：${cleanTask}`
   ].join("\n");
-  return { agent, skill: selected, task: cleanTask, prompt };
+  return {
+    agent,
+    skill: selected,
+    task: cleanTask,
+    execution: {
+      mode: "current-host",
+      supportedHosts: ["codex", "claude-code"],
+      instruction: "Execute this prompt with the current Codex or Claude Code session and its available tools. Do not call a separate model API."
+    },
+    prompt
+  };
 }
 
 export const internals = { SAFE_ID, normalizeId, stableJson, sha256 };

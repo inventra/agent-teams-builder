@@ -1,6 +1,6 @@
 {
   "name": "agent-teams-builder",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
   "author": {
     "name": "LazyOffice"
@@ -9,10 +9,10 @@
   "interface": {
     "displayName": "Agent Teams Builder",
     "shortDescription": "Build and invoke reusable local Agents.",
-    "longDescription": "Converts completed sessions into confirmed SOP-based Agents stored under Downloads/Agent Teams, with memory, multiple skills, host execution, and Anthropic Claude Agent SDK execution.",
+    "longDescription": "Converts completed sessions into confirmed SOP-based Agents stored under Downloads/Agent Teams, with memory, multiple skills, and execution by the current Codex or Claude Code host without separate model API calls.",
     "developerName": "LazyOffice",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write", "MCP", "Agent SDK"],
+    "capabilities": ["Interactive", "Write", "MCP", "Host-native"],
     "defaultPrompt": [
       "把目前流程建立成 Agent，先讓我確認 SOP。",
       "列出我的 Agent Teams 與每個 Agent 的技能。",

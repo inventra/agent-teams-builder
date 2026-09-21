@@ -2,13 +2,13 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agent-teams-builder",
   "displayName": "Agent Teams Builder",
-  "version": "1.0.4",
+  "version": "1.1.0",
   "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
   "author": {
     "name": "LazyOffice"
   },
   "license": "MIT",
-  "keywords": ["agent", "workflow", "sop", "claude-agent-sdk", "agent-teams"],
+  "keywords": ["agent", "workflow", "sop", "claude-code", "agent-teams"],
   "skills": "./skills/",
   "agents": ["./agents/agent-librarian.md"],
   "mcpServers": "./.mcp.json"
