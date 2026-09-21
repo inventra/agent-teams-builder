@@ -4,12 +4,22 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.1.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.2.0.zip`，解壓縮後：
 
 - macOS：雙擊 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.cmd`；也可執行 `Install-Agent-Builder.ps1`。
 
 需求：Node.js 18 以上，以及 Claude Code 2.1.265 以上或 Codex CLI 0.148.0 以上。安裝器會自動偵測可用環境；兩個 CLI 都存在時，會同時安裝並啟用。若宿主尚未登入，安裝器會啟動官方瀏覽器登入流程：Codex 使用 `codex login`，Claude Code 使用 `claude auth login --claudeai`。
+
+## 同一個檔案自動更新
+
+從 v1.2.0 起，`install.command`、`Install-Agent-Builder.cmd` 與 `Install-Agent-Builder.ps1` 同時是安裝器與更新器。每次點擊會檢查公開 GitHub repo 的 `main`：
+
+- 有新 commit：下載該固定 commit 的 ZIP，更新本機 Marketplace，並讓 Claude Code／Codex 重新安裝最新版。
+- 沒有新 commit：顯示已是最新版，不重複安裝。
+- GitHub 暫時無法連線：已安裝的電腦保留目前版本，不會被舊 ZIP 降版；第一次安裝則可使用 ZIP 內附版本。
+
+因此日後只要把 Skill 或程式碼 push 到 `main`，學員再次點擊手上的同一份 v1.2.0（或更新版）安裝檔即可同步，不需要另外下載每次的 Release。更新紀錄會寫入 `下載/Agent Teams/.system/update-state.json`，包含 commit SHA、安裝版本與下載檔 SHA-256。v1.1.0 本身尚未包含更新器，既有使用者需要先下載 v1.2.0 一次。
 
 ## 可以做什麼
 
@@ -39,7 +49,7 @@
 
 ## 驗證狀態
 
-- 13 個自動化測試通過。
+- 18 個自動化測試通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

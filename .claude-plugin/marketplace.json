@@ -11,7 +11,7 @@
       "name": "agent-teams-builder",
       "source": "./plugins/agent-teams-builder",
       "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "category": "productivity"
     }
   ]

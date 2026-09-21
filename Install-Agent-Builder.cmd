@@ -1,8 +1,8 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-echo Agent Teams Builder one-click installer
-echo Checking Node.js, Claude Code, Codex, and desktop apps...
+echo Agent Teams Builder one-click installer and updater
+echo Checking GitHub updates, Node.js, Claude Code, Codex, and desktop apps...
 where node >nul 2>nul
 if errorlevel 1 (
   echo Installation failed: Node.js 18 or later is required.

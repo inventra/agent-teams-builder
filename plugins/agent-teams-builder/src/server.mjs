@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun } from "./store.mjs";
@@ -38,7 +39,9 @@ function safe(handler) {
 }
 
 export function buildServer() {
-  const server = new McpServer({ name: "agent-teams-builder", version: "1.1.0" });
+  const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const version = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")).version;
+  const server = new McpServer({ name: "agent-teams-builder", version });
   server.registerTool("agent_preview", {
     title: "Preview Agent creation or update",
     description: "Validate and preview a complete Agent definition. This does not create or modify the Agent. Show the preview to the user and ask for explicit confirmation before calling agent_commit.",

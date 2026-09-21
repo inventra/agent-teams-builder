@@ -32,6 +32,7 @@ jobs:
         run: |
           export AGENT_TEAMS_INSTALL_ROOT="$RUNNER_TEMP/Agent Teams"
           export AGENT_TEAMS_SKIP_LOGIN="1"
+          export AGENT_TEAMS_SKIP_UPDATE="1"
           ./install.command
           codex plugin list | grep 'agent-teams-builder@agent-teams-local'
           claude plugin list | grep 'agent-teams-builder@agent-teams-local'
@@ -41,6 +42,7 @@ jobs:
         run: |
           $env:AGENT_TEAMS_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP "Agent Teams"
           $env:AGENT_TEAMS_SKIP_LOGIN = "1"
+          $env:AGENT_TEAMS_SKIP_UPDATE = "1"
           powershell -ExecutionPolicy Bypass -File .\Install-Agent-Builder.ps1
           codex plugin list | Select-String 'agent-teams-builder@agent-teams-local'
           claude plugin list | Select-String 'agent-teams-builder@agent-teams-local'

@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 export const MINIMUMS = { node: "18.0.0", codex: "0.148.0", claude: "2.1.265" };
+export const UPDATE_SOURCE = {
+  repository: "inventra/agent-teams-builder",
+  branch: "main",
+  apiBase: "https://api.github.com"
+};
 const PLUGIN = "agent-teams-builder";
 const MARKETPLACE = "agent-teams-local";
+const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 
 function parseVersion(text) {
   const match = String(text || "").match(/(\d+)\.(\d+)\.(\d+)/);
@@ -23,6 +30,14 @@ export function versionAtLeast(actualText, minimum) {
     if (actual[index] < required[index]) return false;
   }
   return true;
+}
+
+export function buildRuntimeVersion(baseVersion, revision, now = new Date()) {
+  const base = String(baseVersion || "0.0.0").split("+")[0];
+  if (!revision || revision === "bundled") return base;
+  if (!/^[0-9a-f]{40}$/i.test(revision)) throw new Error("Invalid source revision for runtime version");
+  const timestamp = now.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  return `${base}+codex.${timestamp}-${revision.slice(0, 12).toLowerCase()}`;
 }
 
 function commandResult(command, args = [], options = {}) {
@@ -119,7 +134,39 @@ export function detectDesktopApps(platform = process.platform, env = process.env
   return { codex: false, chatgpt: false, claude: false };
 }
 
-function copyRelease(sourceRoot, targetMarketplace, skipNpm) {
+function readJson(file) {
+  return JSON.parse(fs.readFileSync(file, "utf8"));
+}
+
+function writeJson(file, value) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
+  fs.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.renameSync(temporary, file);
+}
+
+function patchJsonVersion(file, version, marketplace = false) {
+  const value = readJson(file);
+  if (marketplace) {
+    const entry = value.plugins?.find((item) => item.name === PLUGIN);
+    if (!entry) throw new Error(`Plugin entry not found in ${file}`);
+    entry.version = version;
+  } else {
+    value.version = version;
+    if (value.packages?.[""]) value.packages[""].version = version;
+  }
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function applyRuntimeVersion(stagedMarketplace, version) {
+  const pluginRoot = path.join(stagedMarketplace, "plugins", PLUGIN);
+  for (const relative of ["package.json", "package-lock.json", "plugin.json", ".claude-plugin/plugin.json", ".codex-plugin/plugin.json"]) {
+    patchJsonVersion(path.join(pluginRoot, relative), version);
+  }
+  patchJsonVersion(path.join(stagedMarketplace, ".claude-plugin", "marketplace.json"), version, true);
+}
+
+function copyRelease(sourceRoot, targetMarketplace, skipNpm, runtimeVersion) {
   const sourcePlugin = path.join(sourceRoot, "plugins", PLUGIN);
   if (!fs.existsSync(path.join(sourcePlugin, "package.json"))) throw new Error(`Plugin source not found: ${sourcePlugin}`);
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-teams-install-"));
@@ -131,6 +178,7 @@ function copyRelease(sourceRoot, targetMarketplace, skipNpm) {
   fs.mkdirSync(path.join(stagedMarketplace, ".claude-plugin"), { recursive: true });
   fs.copyFileSync(path.join(sourceRoot, ".agents", "plugins", "marketplace.json"), path.join(stagedMarketplace, ".agents", "plugins", "marketplace.json"));
   fs.copyFileSync(path.join(sourceRoot, ".claude-plugin", "marketplace.json"), path.join(stagedMarketplace, ".claude-plugin", "marketplace.json"));
+  applyRuntimeVersion(stagedMarketplace, runtimeVersion);
   if (!skipNpm) {
     const npm = commandResult(process.platform === "win32" ? "npm.cmd" : "npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: stagedPlugin, stdio: ["ignore", "pipe", "pipe"] });
     if (!npm.ok) throw new Error(`Runtime dependency installation failed: ${npm.stderr || npm.error}`);
@@ -143,7 +191,7 @@ function copyRelease(sourceRoot, targetMarketplace, skipNpm) {
   }
   fs.renameSync(stagedMarketplace, targetMarketplace);
   fs.rmSync(stagingRoot, { recursive: true, force: true });
-  return backup;
+  return { backup, installedVersion: runtimeVersion };
 }
 
 function configureCodex(marketplaceRoot) {
@@ -190,10 +238,14 @@ export function install(options = {}) {
   const compatibleHost = compatibility.codex?.compatible || compatibility.claude?.compatible;
   if (!compatibleHost) throw new Error(`Installed hosts are too old. Minimums: Codex ${MINIMUMS.codex}, Claude Code ${MINIMUMS.claude}`);
   const skipLogin = options.skipLogin || process.env.AGENT_TEAMS_SKIP_LOGIN === "1";
+  const skipNpm = options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1";
+  const sourceRevision = options.sourceRevision || process.env.AGENT_TEAMS_SOURCE_REVISION || "bundled";
+  const baseVersion = readJson(path.join(sourceRoot, "plugins", PLUGIN, "package.json")).version;
+  const runtimeVersion = options.runtimeVersion || buildRuntimeVersion(baseVersion, sourceRevision, options.now || new Date());
   const authentication = {};
   if (compatibility.codex?.compatible) authentication.codex = ensureHostAuthentication("codex", { skipLogin });
   if (compatibility.claude?.compatible) authentication.claude = ensureHostAuthentication("claude", { skipLogin });
-  const backup = copyRelease(sourceRoot, marketplaceRoot, options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1");
+  const copied = copyRelease(sourceRoot, marketplaceRoot, skipNpm, runtimeVersion);
   const results = {};
   if (compatibility.codex?.compatible) {
     results.codex = authentication.codex.loggedIn || authentication.codex.skipped
@@ -207,22 +259,32 @@ export function install(options = {}) {
   }
   const pluginRoot = path.join(marketplaceRoot, "plugins", PLUGIN);
   let doctor = { ok: false, error: "skipped" };
-  if (!(options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1")) {
+  if (!skipNpm) {
     const check = commandResult("node", [path.join(pluginRoot, "scripts", "agent-teams-cli.mjs"), "doctor"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
-    doctor = check.ok ? JSON.parse(check.stdout) : { ok: false, error: check.stderr || check.error };
+    if (check.ok) {
+      try { doctor = JSON.parse(check.stdout); }
+      catch { doctor = { ok: false, error: "Doctor returned invalid JSON" }; }
+    } else {
+      doctor = { ok: false, error: check.stderr || check.error };
+    }
   }
   const allHostsInstalled = Object.values(results).length > 0 && Object.values(results).every((item) => item.installed);
+  const installationHealthy = allHostsInstalled && (doctor.ok || skipNpm);
   let backupRemoved = false;
-  if (backup && allHostsInstalled && doctor.ok) {
-    fs.rmSync(backup, { recursive: true, force: true });
+  if (copied.backup && installationHealthy) {
+    fs.rmSync(copied.backup, { recursive: true, force: true });
     backupRemoved = true;
   }
   const report = {
     installedAt: new Date().toISOString(),
+    installedVersion: copied.installedVersion,
+    sourceRevision,
+    sourceCommitDate: options.sourceCommitDate || process.env.AGENT_TEAMS_SOURCE_COMMIT_DATE || null,
+    archiveSha256: options.archiveSha256 || process.env.AGENT_TEAMS_ARCHIVE_SHA256 || null,
     agentTeamsRoot,
     marketplaceRoot,
     pluginRoot,
-    backup,
+    backup: copied.backup,
     backupRemoved,
     detected,
     compatibility,
@@ -237,18 +299,163 @@ export function install(options = {}) {
     ]
   };
   fs.writeFileSync(path.join(agentTeamsRoot, "installation-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
+  if (installationHealthy) {
+    writeJson(path.join(agentTeamsRoot, ".system", "update-state.json"), {
+      repository: UPDATE_SOURCE.repository,
+      branch: UPDATE_SOURCE.branch,
+      revision: sourceRevision,
+      commitDate: report.sourceCommitDate,
+      archiveSha256: report.archiveSha256,
+      installedVersion: report.installedVersion,
+      updatedAt: report.installedAt
+    });
+  }
   return report;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+export function extractArchive(archivePath, destination, platform = process.platform) {
+  if (platform === "win32") {
+    const escapedArchive = archivePath.replace(/'/g, "''");
+    const escapedDestination = destination.replace(/'/g, "''");
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", `Expand-Archive -LiteralPath '${escapedArchive}' -DestinationPath '${escapedDestination}' -Force`], {
+      encoding: "utf8",
+      shell: false,
+      windowsHide: true
+    });
+    if (result.status !== 0) throw new Error(`Unable to extract update: ${(result.stderr || result.error?.message || "PowerShell failed").trim()}`);
+    return;
+  }
+  const result = spawnSync("unzip", ["-q", archivePath, "-d", destination], { encoding: "utf8", shell: false });
+  if (result.status !== 0) throw new Error(`Unable to extract update: ${(result.stderr || result.error?.message || "unzip failed").trim()}`);
+}
+
+export function findSourceRoot(extractedRoot) {
+  const candidates = [extractedRoot, ...fs.readdirSync(extractedRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => path.join(extractedRoot, entry.name))];
+  const found = candidates.find((candidate) =>
+    fs.existsSync(path.join(candidate, "scripts", "install.mjs")) &&
+    fs.existsSync(path.join(candidate, "plugins", PLUGIN, "package.json")) &&
+    fs.existsSync(path.join(candidate, ".agents", "plugins", "marketplace.json"))
+  );
+  if (!found) throw new Error("Downloaded update does not contain the expected Agent Teams Builder layout");
+  return found;
+}
+
+function runUpdatedInstaller(sourceRoot, env) {
+  const result = spawnSync(process.execPath, [path.join(sourceRoot, "scripts", "install.mjs")], {
+    cwd: sourceRoot,
+    env,
+    stdio: "inherit",
+    shell: false
+  });
+  return { ok: result.status === 0, status: result.status, error: result.error?.message || null };
+}
+
+function readUpdateState(stateFile) {
   try {
+    const state = readJson(stateFile);
+    return state.repository === UPDATE_SOURCE.repository ? state : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetchImpl(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function maybeRunSelfUpdate(options = {}) {
+  const env = options.env || process.env;
+  if (options.skipUpdate || env.AGENT_TEAMS_SKIP_UPDATE === "1") return { handled: false, status: "skipped" };
+  const fetchImpl = options.fetchImpl || globalThis.fetch;
+  if (typeof fetchImpl !== "function") return { handled: false, status: "fetch-unavailable" };
+  const agentTeamsRoot = path.resolve(options.agentTeamsRoot || env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
+  const stateFile = path.join(agentTeamsRoot, ".system", "update-state.json");
+  const stateExists = fs.existsSync(stateFile);
+  const state = readUpdateState(stateFile);
+  const headers = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "User-Agent": "Agent-Teams-Builder-Updater"
+  };
+  let remote;
+  try {
+    const commitUrl = `${UPDATE_SOURCE.apiBase}/repos/${UPDATE_SOURCE.repository}/commits/${UPDATE_SOURCE.branch}`;
+    const response = await fetchWithTimeout(fetchImpl, commitUrl, { headers }, options.timeoutMs || 15000);
+    if (!response.ok) throw new Error(`GitHub commit check returned HTTP ${response.status}`);
+    remote = await response.json();
+    if (!/^[0-9a-f]{40}$/i.test(remote?.sha || "")) throw new Error("GitHub returned an invalid commit SHA");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (stateExists) {
+      console.warn(`\n無法檢查 GitHub 更新，保留目前已安裝版本，不會用舊 ZIP 覆蓋：${message}\n`);
+      return { handled: true, ok: true, status: "offline-current", error: message, state };
+    }
+    console.warn(`\n無法檢查 GitHub 更新，將使用 ZIP 內附版本完成第一次安裝：${message}\n`);
+    return { handled: false, status: "offline-first-install", error: message };
+  }
+
+  if (state?.revision === remote.sha) {
+    console.log(`\nAgent Teams Builder 已是 GitHub main 最新版本（${remote.sha.slice(0, 12)}），不需重裝。\n`);
+    return { handled: true, ok: true, status: "up-to-date", revision: remote.sha, state };
+  }
+
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "agent-teams-update-"));
+  const archivePath = path.join(temporary, "update.zip");
+  const extractedRoot = path.join(temporary, "source");
+  fs.mkdirSync(extractedRoot, { recursive: true });
+  try {
+    console.log(`\n發現 GitHub 新版本 ${remote.sha.slice(0, 12)}，正在安全下載並更新…\n`);
+    const archiveUrl = `${UPDATE_SOURCE.apiBase}/repos/${UPDATE_SOURCE.repository}/zipball/${remote.sha}`;
+    const response = await fetchWithTimeout(fetchImpl, archiveUrl, { headers, redirect: "follow" }, options.timeoutMs || 30000);
+    if (!response.ok) throw new Error(`GitHub archive download returned HTTP ${response.status}`);
+    const declaredLength = Number(response.headers?.get?.("content-length") || 0);
+    if (declaredLength > MAX_ARCHIVE_BYTES) throw new Error("GitHub update archive is larger than the 50 MB safety limit");
+    const archive = Buffer.from(await response.arrayBuffer());
+    if (archive.length === 0 || archive.length > MAX_ARCHIVE_BYTES) throw new Error("GitHub update archive is empty or exceeds the 50 MB safety limit");
+    const archiveSha256 = crypto.createHash("sha256").update(archive).digest("hex");
+    fs.writeFileSync(archivePath, archive);
+    (options.extractArchiveImpl || extractArchive)(archivePath, extractedRoot, options.platform || process.platform);
+    const downloadedSource = findSourceRoot(extractedRoot);
+    const childEnv = {
+      ...env,
+      AGENT_TEAMS_SKIP_UPDATE: "1",
+      AGENT_TEAMS_INSTALL_ROOT: agentTeamsRoot,
+      AGENT_TEAMS_SOURCE_REVISION: remote.sha,
+      AGENT_TEAMS_SOURCE_COMMIT_DATE: remote.commit?.committer?.date || remote.commit?.author?.date || "",
+      AGENT_TEAMS_ARCHIVE_SHA256: archiveSha256
+    };
+    const run = (options.runChildImpl || runUpdatedInstaller)(downloadedSource, childEnv);
+    if (!run.ok) throw new Error(run.error || `Updated installer exited with status ${run.status}`);
+    return { handled: true, ok: true, status: "updated", revision: remote.sha, archiveSha256 };
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+}
+
+async function main() {
+  try {
+    const update = await maybeRunSelfUpdate();
+    if (update.handled) {
+      if (update.ok === false) process.exitCode = 1;
+      return;
+    }
     const report = install();
     console.log("\nAgent Teams Builder 安裝完成。\n");
     console.log(JSON.stringify(report, null, 2));
     console.log("\n請開啟新的 Claude Code／Codex Session，然後說：列出我的 Agent Teams。\n");
-    if (Object.values(report.results).some((item) => !item.installed)) process.exitCode = 1;
+    if (Object.values(report.results).some((item) => !item.installed) || (!report.doctor.ok && process.env.AGENT_TEAMS_SKIP_NPM !== "1")) process.exitCode = 1;
   } catch (error) {
-    console.error(`\n安裝失敗：${error instanceof Error ? error.message : String(error)}\n`);
+    console.error(`\n安裝／更新失敗：${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
   }
 }
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main();
