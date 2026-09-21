@@ -325,6 +325,11 @@ export function extractArchive(archivePath, destination, platform = process.plat
     if (result.status !== 0) throw new Error(`Unable to extract update: ${(result.stderr || result.error?.message || "PowerShell failed").trim()}`);
     return;
   }
+  if (platform === "darwin") {
+    const result = spawnSync("ditto", ["-x", "-k", archivePath, destination], { encoding: "utf8", shell: false });
+    if (result.status !== 0) throw new Error(`Unable to extract update: ${(result.stderr || result.error?.message || "ditto failed").trim()}`);
+    return;
+  }
   const result = spawnSync("unzip", ["-q", archivePath, "-d", destination], { encoding: "utf8", shell: false });
   if (result.status !== 0) throw new Error(`Unable to extract update: ${(result.stderr || result.error?.message || "unzip failed").trim()}`);
 }

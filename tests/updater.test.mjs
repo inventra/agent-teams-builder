@@ -120,6 +120,7 @@ test("platform archive extractor accepts the updater repository layout", () => {
   fs.writeFileSync(path.join(source, "scripts", "install.mjs"), "");
   fs.writeFileSync(path.join(source, "plugins", "agent-teams-builder", "package.json"), "{}");
   fs.writeFileSync(path.join(source, ".agents", "plugins", "marketplace.json"), "{}");
+  fs.writeFileSync(path.join(source, "README-安裝說明.md"), "中文檔名必須能正常解壓縮");
   fs.mkdirSync(destination);
   try {
     const packed = process.platform === "win32"
@@ -129,6 +130,7 @@ test("platform archive extractor accepts the updater repository layout", () => {
     extractArchive(archive, destination);
     const extractedSource = findSourceRoot(destination);
     assert.equal(fs.existsSync(path.join(extractedSource, "scripts", "install.mjs")), true);
+    assert.equal(fs.readFileSync(path.join(extractedSource, "README-安裝說明.md"), "utf8"), "中文檔名必須能正常解壓縮");
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
