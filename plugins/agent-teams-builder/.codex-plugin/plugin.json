@@ -1,6 +1,6 @@
 {
   "name": "agent-teams-builder",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
   "author": {
     "name": "LazyOffice"

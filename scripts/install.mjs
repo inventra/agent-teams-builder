@@ -26,7 +26,12 @@ export function versionAtLeast(actualText, minimum) {
 }
 
 function commandResult(command, args = [], options = {}) {
-  const result = spawnSync(command, args, { encoding: "utf8", ...options });
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    shell: process.platform === "win32",
+    windowsHide: true,
+    ...options
+  });
   return {
     ok: result.status === 0,
     status: result.status,
@@ -34,6 +39,10 @@ function commandResult(command, args = [], options = {}) {
     stderr: (result.stderr || "").trim(),
     error: result.error?.message || null
   };
+}
+
+function hostCommand(name) {
+  return process.platform === "win32" ? `${name}.cmd` : name;
 }
 
 function available(command) {
@@ -87,20 +96,22 @@ function copyRelease(sourceRoot, targetMarketplace, skipNpm) {
 }
 
 function configureCodex(marketplaceRoot) {
-  const addMarket = commandResult("codex", ["plugin", "marketplace", "add", marketplaceRoot, "--json"]);
+  const codex = hostCommand("codex");
+  const addMarket = commandResult(codex, ["plugin", "marketplace", "add", marketplaceRoot, "--json"]);
   const marketOkay = addMarket.ok || /already|exists|configured/i.test(`${addMarket.stdout}\n${addMarket.stderr}`);
   if (!marketOkay) return { installed: false, error: addMarket.stderr || addMarket.error || addMarket.stdout };
-  const addPlugin = commandResult("codex", ["plugin", "add", `${PLUGIN}@${MARKETPLACE}`, "--json"]);
+  const addPlugin = commandResult(codex, ["plugin", "add", `${PLUGIN}@${MARKETPLACE}`, "--json"]);
   return { installed: addPlugin.ok, output: addPlugin.stdout, error: addPlugin.ok ? null : addPlugin.stderr || addPlugin.error };
 }
 
 function configureClaude(marketplaceRoot) {
-  const addMarket = commandResult("claude", ["plugin", "marketplace", "add", marketplaceRoot]);
+  const claude = hostCommand("claude");
+  const addMarket = commandResult(claude, ["plugin", "marketplace", "add", marketplaceRoot]);
   const marketOkay = addMarket.ok || /already|exists|configured/i.test(`${addMarket.stdout}\n${addMarket.stderr}`);
   if (!marketOkay) return { installed: false, error: addMarket.stderr || addMarket.error || addMarket.stdout };
-  let install = commandResult("claude", ["plugin", "install", `${PLUGIN}@${MARKETPLACE}`, "--scope", "user"]);
+  let install = commandResult(claude, ["plugin", "install", `${PLUGIN}@${MARKETPLACE}`, "--scope", "user"]);
   if (/already installed/i.test(`${install.stdout}\n${install.stderr}`)) {
-    install = commandResult("claude", ["plugin", "update", `${PLUGIN}@${MARKETPLACE}`]);
+    install = commandResult(claude, ["plugin", "update", `${PLUGIN}@${MARKETPLACE}`]);
   }
   return { installed: install.ok, output: install.stdout, error: install.ok ? null : install.stderr || install.error };
 }
@@ -114,8 +125,8 @@ export function install(options = {}) {
   if (!versionAtLeast(nodeVersion, MINIMUMS.node)) throw new Error(`Node.js ${MINIMUMS.node}+ is required; found ${nodeVersion}`);
   const detected = {
     desktopApps: detectDesktopApps(),
-    codexCli: available("codex"),
-    claudeCli: available("claude")
+    codexCli: available(hostCommand("codex")),
+    claudeCli: available(hostCommand("claude"))
   };
   if (!detected.codexCli && !detected.claudeCli) {
     throw new Error("Neither Codex CLI nor Claude Code was found. Install at least one supported host, then run this installer again.");

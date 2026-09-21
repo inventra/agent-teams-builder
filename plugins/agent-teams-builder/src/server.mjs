@@ -39,7 +39,7 @@ function safe(handler) {
 }
 
 export function buildServer() {
-  const server = new McpServer({ name: "agent-teams-builder", version: "1.0.3" });
+  const server = new McpServer({ name: "agent-teams-builder", version: "1.0.4" });
   server.registerTool("agent_preview", {
     title: "Preview Agent creation or update",
     description: "Validate and preview a complete Agent definition. This does not create or modify the Agent. Show the preview to the user and ask for explicit confirmation before calling agent_commit.",

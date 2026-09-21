@@ -1,6 +1,6 @@
 {
   "name": "agent-teams-builder-runtime",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "type": "module",
   "description": "Local MCP and Anthropic Claude Agent SDK runtime for Agent Teams Builder",

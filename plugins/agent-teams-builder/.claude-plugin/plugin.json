@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "agent-teams-builder",
   "displayName": "Agent Teams Builder",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
   "author": {
     "name": "LazyOffice"

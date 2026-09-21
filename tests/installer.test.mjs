@@ -6,6 +6,19 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { install, versionAtLeast } from "../scripts/install.mjs";
 
+function createFakeHost(bin, name, version, log, { alreadyInstalled = false } = {}) {
+  if (process.platform === "win32") {
+    const executable = path.join(bin, `${name}.cmd`);
+    const already = alreadyInstalled ? `echo Plugin is already installed\r\n` : "";
+    fs.writeFileSync(executable, `@echo off\r\nif "%1"=="--version" (echo ${version} & exit /b 0)\r\necho ${name} %*>>"${log}"\r\n${already}exit /b 0\r\n`, "utf8");
+    return;
+  }
+  const executable = path.join(bin, name);
+  const already = alreadyInstalled ? `echo "Plugin is already installed"\n` : "";
+  fs.writeFileSync(executable, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\necho "${name} $@" >> "${log}"\n${already}exit 0\n`, "utf8");
+  fs.chmodSync(executable, 0o755);
+}
+
 test("semantic version compatibility is numeric", () => {
   assert.equal(versionAtLeast("codex-cli 0.148.0", "0.148.0"), true);
   assert.equal(versionAtLeast("2.1.9", "2.1.265"), false);
@@ -17,13 +30,10 @@ test("installer configures every detected compatible CLI", () => {
   const bin = path.join(temporary, "bin");
   const log = path.join(temporary, "calls.log");
   fs.mkdirSync(bin);
-  for (const [name, version] of [["codex", "codex-cli 0.148.0"], ["claude", "2.1.270 (Claude Code)"]]) {
-    const executable = path.join(bin, name);
-    fs.writeFileSync(executable, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "${version}"; exit 0; fi\necho "${name} $@" >> "${log}"\nexit 0\n`, "utf8");
-    fs.chmodSync(executable, 0o755);
-  }
+  createFakeHost(bin, "codex", "codex-cli 0.148.0", log);
+  createFakeHost(bin, "claude", "2.1.270 (Claude Code)", log);
   const oldPath = process.env.PATH;
-  process.env.PATH = `${bin}:${oldPath}`;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   process.env.AGENT_TEAMS_SKIP_NPM = "1";
   try {
     const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -47,14 +57,10 @@ test("installer updates Claude when the plugin is already installed", () => {
   const bin = path.join(temporary, "bin");
   const log = path.join(temporary, "calls.log");
   fs.mkdirSync(bin);
-  const codex = path.join(bin, "codex");
-  fs.writeFileSync(codex, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "codex-cli 0.148.0"; exit 0; fi\nexit 0\n`, "utf8");
-  fs.chmodSync(codex, 0o755);
-  const claude = path.join(bin, "claude");
-  fs.writeFileSync(claude, `#!/bin/sh\nif [ "$1" = "--version" ]; then echo "2.1.270 (Claude Code)"; exit 0; fi\necho "claude $@" >> "${log}"\nif [ "$1 $2" = "plugin install" ]; then echo "Plugin is already installed"; exit 0; fi\nexit 0\n`, "utf8");
-  fs.chmodSync(claude, 0o755);
+  createFakeHost(bin, "codex", "codex-cli 0.148.0", log);
+  createFakeHost(bin, "claude", "2.1.270 (Claude Code)", log, { alreadyInstalled: true });
   const oldPath = process.env.PATH;
-  process.env.PATH = `${bin}:${oldPath}`;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   process.env.AGENT_TEAMS_SKIP_NPM = "1";
   try {
     const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
