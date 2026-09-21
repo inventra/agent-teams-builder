@@ -366,6 +366,14 @@ function readUpdateState(stateFile) {
   }
 }
 
+export function sameFile(left, right) {
+  try {
+    return fs.realpathSync(left) === fs.realpathSync(right);
+  } catch {
+    return path.resolve(left) === path.resolve(right);
+  }
+}
+
 async function fetchWithTimeout(fetchImpl, url, options = {}, timeoutMs = 15000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -388,11 +396,12 @@ export async function maybeRunSelfUpdate(options = {}) {
   const headers = {
     Accept: "application/vnd.github+json",
     "X-GitHub-Api-Version": "2022-11-28",
-    "User-Agent": "Agent-Teams-Builder-Updater"
+    "User-Agent": "Agent-Teams-Builder-Updater",
+    "Cache-Control": "no-cache"
   };
   let remote;
   try {
-    const commitUrl = `${UPDATE_SOURCE.apiBase}/repos/${UPDATE_SOURCE.repository}/commits/${UPDATE_SOURCE.branch}`;
+    const commitUrl = `${UPDATE_SOURCE.apiBase}/repos/${UPDATE_SOURCE.repository}/commits/${UPDATE_SOURCE.branch}?cache_bust=${Date.now()}`;
     const response = await fetchWithTimeout(fetchImpl, commitUrl, { headers }, options.timeoutMs || 15000);
     if (!response.ok) throw new Error(`GitHub commit check returned HTTP ${response.status}`);
     remote = await response.json();
@@ -439,6 +448,10 @@ export async function maybeRunSelfUpdate(options = {}) {
     };
     const run = (options.runChildImpl || runUpdatedInstaller)(downloadedSource, childEnv);
     if (!run.ok) throw new Error(run.error || `Updated installer exited with status ${run.status}`);
+    const installedState = readUpdateState(stateFile);
+    if (installedState?.revision !== remote.sha) {
+      throw new Error("Updated installer exited without recording the expected GitHub commit; the update is not considered successful");
+    }
     return { handled: true, ok: true, status: "updated", revision: remote.sha, archiveSha256 };
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -463,4 +476,4 @@ async function main() {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) await main();
+if (process.argv[1] && sameFile(fileURLToPath(import.meta.url), process.argv[1])) await main();

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { buildRuntimeVersion, extractArchive, findSourceRoot, maybeRunSelfUpdate, UPDATE_SOURCE } from "../scripts/install.mjs";
+import { buildRuntimeVersion, extractArchive, findSourceRoot, maybeRunSelfUpdate, sameFile, UPDATE_SOURCE } from "../scripts/install.mjs";
 
 const REVISION = "0123456789abcdef0123456789abcdef01234567";
 
@@ -58,15 +58,52 @@ test("updater downloads the immutable commit archive and delegates installation"
       },
       runChildImpl: (sourceRoot, env) => {
         child = { sourceRoot, env };
+        writeState(path.join(temporary, "Agent Teams"), env.AGENT_TEAMS_SOURCE_REVISION);
         return { ok: true, status: 0 };
       }
     });
     assert.equal(result.status, "updated");
-    assert.equal(calls[0], "https://api.github.com/repos/inventra/agent-teams-builder/commits/main");
+    assert.match(calls[0], /^https:\/\/api\.github\.com\/repos\/inventra\/agent-teams-builder\/commits\/main\?cache_bust=\d+$/);
     assert.equal(calls[1], `https://api.github.com/repos/inventra/agent-teams-builder/zipball/${REVISION}`);
     assert.equal(child.env.AGENT_TEAMS_SOURCE_REVISION, REVISION);
     assert.equal(child.env.AGENT_TEAMS_SKIP_UPDATE, "1");
     assert.match(child.env.AGENT_TEAMS_ARCHIVE_SHA256, /^[0-9a-f]{64}$/);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("main-script detection resolves symbolic path aliases", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "agent-updater-realpath-test-"));
+  const actual = path.join(temporary, "actual.mjs");
+  fs.writeFileSync(actual, "");
+  try {
+    const alias = process.platform === "darwin" && actual.startsWith("/var/") ? `/private${actual}` : path.join(temporary, ".", "actual.mjs");
+    assert.equal(sameFile(actual, alias), true);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("updater rejects a child installer that exits zero without recording the commit", async () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "agent-updater-proof-test-"));
+  let fetchCount = 0;
+  try {
+    await assert.rejects(() => maybeRunSelfUpdate({
+      agentTeamsRoot: path.join(temporary, "Agent Teams"),
+      env: {},
+      fetchImpl: async () => (++fetchCount === 1 ? jsonResponse({ sha: REVISION }) : archiveResponse()),
+      extractArchiveImpl: (_archive, destination) => {
+        const source = path.join(destination, "repo");
+        fs.mkdirSync(path.join(source, "scripts"), { recursive: true });
+        fs.mkdirSync(path.join(source, "plugins", "agent-teams-builder"), { recursive: true });
+        fs.mkdirSync(path.join(source, ".agents", "plugins"), { recursive: true });
+        fs.writeFileSync(path.join(source, "scripts", "install.mjs"), "");
+        fs.writeFileSync(path.join(source, "plugins", "agent-teams-builder", "package.json"), "{}");
+        fs.writeFileSync(path.join(source, ".agents", "plugins", "marketplace.json"), "{}");
+      },
+      runChildImpl: () => ({ ok: true, status: 0 })
+    }), /without recording the expected GitHub commit/);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }

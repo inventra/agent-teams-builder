@@ -49,7 +49,7 @@
 
 ## 驗證狀態
 
-- 18 個自動化測試通過。
+- 20 個自動化測試通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。
