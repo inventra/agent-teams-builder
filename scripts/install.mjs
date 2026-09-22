@@ -41,9 +41,12 @@ export function buildRuntimeVersion(baseVersion, revision, now = new Date()) {
 }
 
 function commandResult(command, args = [], options = {}) {
-  const result = spawnSync(command, args, {
+  const throughCmd = process.platform === "win32" && /\.cmd$/i.test(command);
+  const executable = throughCmd ? (process.env.ComSpec || "cmd.exe") : command;
+  const commandArgs = throughCmd ? ["/d", "/s", "/c", command, ...args] : args;
+  const result = spawnSync(executable, commandArgs, {
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     windowsHide: true,
     ...options
   });
@@ -57,8 +60,11 @@ function commandResult(command, args = [], options = {}) {
 }
 
 function interactiveCommand(command, args = []) {
-  const result = spawnSync(command, args, {
-    shell: process.platform === "win32",
+  const throughCmd = process.platform === "win32" && /\.cmd$/i.test(command);
+  const executable = throughCmd ? (process.env.ComSpec || "cmd.exe") : command;
+  const commandArgs = throughCmd ? ["/d", "/s", "/c", command, ...args] : args;
+  const result = spawnSync(executable, commandArgs, {
+    shell: false,
     windowsHide: false,
     stdio: "inherit"
   });

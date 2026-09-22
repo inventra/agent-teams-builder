@@ -105,11 +105,14 @@ export function startWorkflowRun({ agent, workflow, task, host }) {
   const args = selectedHost === "codex"
     ? ["exec", "--skip-git-repo-check", "-C", agentDirectory, "--sandbox", "workspace-write", "-"]
     : ["-p", "--permission-mode", "dontAsk", "--output-format", "text"];
-  const child = spawn(command, args, {
+  const throughCmd = process.platform === "win32";
+  const executable = throughCmd ? (process.env.ComSpec || "cmd.exe") : command;
+  const commandArgs = throughCmd ? ["/d", "/s", "/c", command, ...args] : args;
+  const child = spawn(executable, commandArgs, {
     cwd: agentDirectory,
     detached: false,
     windowsHide: true,
-    shell: process.platform === "win32",
+    shell: false,
     stdio: ["pipe", output, output]
   });
   child.stdin.end(prepared.prompt);

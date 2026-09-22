@@ -54,5 +54,5 @@ jobs:
           $env:VIXO_AGENTS_PORT = "47829"
           & node $dashboard start
           $dashboardStatus = & node $dashboard status
-          if ($dashboardStatus -notmatch '"running": true') { throw "VIXO Agents Dashboard did not start" }
+          if (($dashboardStatus -join "`n") -notmatch '"running": true') { throw "VIXO Agents Dashboard did not start" }
           & node $dashboard stop
