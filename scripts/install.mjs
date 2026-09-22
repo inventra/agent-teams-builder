@@ -166,6 +166,16 @@ function applyRuntimeVersion(stagedMarketplace, version) {
   patchJsonVersion(path.join(stagedMarketplace, ".claude-plugin", "marketplace.json"), version, true);
 }
 
+function moveDirectoryAcrossVolumes(source, destination) {
+  try {
+    fs.renameSync(source, destination);
+  } catch (error) {
+    if (error?.code !== "EXDEV") throw error;
+    fs.cpSync(source, destination, { recursive: true, errorOnExist: true, force: false });
+    fs.rmSync(source, { recursive: true, force: true });
+  }
+}
+
 function copyRelease(sourceRoot, targetMarketplace, skipNpm, runtimeVersion) {
   const sourcePlugin = path.join(sourceRoot, "plugins", PLUGIN);
   if (!fs.existsSync(path.join(sourcePlugin, "package.json"))) throw new Error(`Plugin source not found: ${sourcePlugin}`);
@@ -189,8 +199,15 @@ function copyRelease(sourceRoot, targetMarketplace, skipNpm, runtimeVersion) {
     backup = `${targetMarketplace}.backup-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     fs.renameSync(targetMarketplace, backup);
   }
-  fs.renameSync(stagedMarketplace, targetMarketplace);
-  fs.rmSync(stagingRoot, { recursive: true, force: true });
+  try {
+    moveDirectoryAcrossVolumes(stagedMarketplace, targetMarketplace);
+  } catch (error) {
+    fs.rmSync(targetMarketplace, { recursive: true, force: true });
+    if (backup && fs.existsSync(backup)) fs.renameSync(backup, targetMarketplace);
+    throw error;
+  } finally {
+    fs.rmSync(stagingRoot, { recursive: true, force: true });
+  }
   return { backup, installedVersion: runtimeVersion };
 }
 
