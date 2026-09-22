@@ -10,7 +10,7 @@
 - macOS arm64 實機雙宿主安裝：Codex CLI 0.148.0 與 Claude Code 2.1.270 都已登入、安裝 v1.3.0 並通過 Runtime Doctor。
 - Dashboard 實機：成功啟動在 `127.0.0.1`，Token 授權後可讀取 Agent/Skill/Workflow，視覺檢查已確認員工卡、節點流、Play 與排程對話框。
 - Dashboard Play 真實 Codex E2E：由 HTTP Play 請求啟動已登入的 Codex，6 秒內 exit 0，執行記錄轉為 `completed`，日誌輸出 `VIXO_PLAY_OK`，未使用額外 API Key。
-- macOS/Windows Dashboard launcher 的啟動、狀態讀取與停止流程通過；Windows 實際 runner 待 GitHub Actions 在 push 後回報。
+- GitHub Actions `macos-latest` 與 `windows-latest`：兩邊均完成 23 個測試、manifest 驗證、真實宿主 CLI 安裝及一鍵安裝器；Windows 額外通過跨磁碟與含空白路徑安裝。通過紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35765604515>。
 
 ## v1.3.0 已知邊界
 
