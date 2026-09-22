@@ -20,7 +20,7 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "dashboard_open", "workflow_prepare_run"]);
     const preview = await client.callTool({
       name: "agent_preview",
       arguments: {
@@ -52,7 +52,18 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
               steps: ["讀取素材", "草擬貼文", "等待確認"],
               successCriteria: ["貼文可供審核", "未直接發布"]
             }
-          ]
+          ],
+          workflows: [{
+            id: "content-planning",
+            name: "內容規劃流程",
+            description: "先找關鍵字，再撰寫貼文",
+            triggers: ["規劃貼文"],
+            nodes: [
+              { id: "keywords", name: "找關鍵字", type: "skill", skillId: "find-keywords", instructions: "搜尋並整理關鍵字" },
+              { id: "draft", name: "撰寫貼文", type: "skill", skillId: "draft-facebook-post", instructions: "撰寫可供審核的貼文" },
+              { id: "approval", name: "人工審核", type: "approval", instructions: "等待使用者確認", requiresApproval: true }
+            ]
+          }]
         }
       }
     });
@@ -65,6 +76,9 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
     const prepared = await client.callTool({ name: "agent_prepare_run", arguments: { agent: "小編", task: "幫我找關鍵字" } });
     assert.equal(prepared.structuredContent.skill.id, "find-keywords");
     assert.equal(prepared.structuredContent.execution.mode, "current-host");
+    const workflow = await client.callTool({ name: "workflow_prepare_run", arguments: { agent: "小編", workflow: "content-planning", task: "規劃新品貼文" } });
+    assert.equal(workflow.structuredContent.workflow.nodes.length, 3);
+    assert.equal(workflow.structuredContent.execution.requiresApprovalNodes, true);
   } finally {
     await client.close();
     fs.rmSync(temporary, { recursive: true, force: true });

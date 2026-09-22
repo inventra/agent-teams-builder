@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { commitPreview, createPreview, getAgent, listAgents, prepareRun } from "../src/store.mjs";
+import { commitPreview, createPreview, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "../src/store.mjs";
 
 function spec(overrides = {}) {
   return {
@@ -22,6 +22,16 @@ function spec(overrides = {}) {
       allowedTools: ["WebSearch", "WebFetch"],
       steps: ["確認出發地、目的地與日期", "查詢航空公司網站", "整理航班資訊"],
       successCriteria: ["列出可核對的航班編號與時間", "未進行購票"]
+    }],
+    workflows: [{
+      id: "flight-search-flow",
+      name: "航班查詢流程",
+      description: "收集條件、查詢並整理航班",
+      triggers: ["查詢航班"],
+      nodes: [
+        { id: "collect-input", name: "確認條件", type: "manual", instructions: "確認出發地、目的地與日期" },
+        { id: "search", name: "查詢航班", type: "skill", skillId: "search-flights", instructions: "執行航班查詢 Skill" }
+      ]
     }],
     ...overrides
   };
@@ -42,7 +52,7 @@ test("requires preview then explicit commit and writes full Agent structure", ()
   const saved = commitPreview({ token: preview.token, userConfirmation: "確認，請建立" });
   assert.equal(saved.version, 1);
   assert.equal(getAgent("小美").id, "booking");
-  for (const relative of ["agent.json", "AGENT.md", "MEMORY.md", "skills/search-flights/SKILL.md", "history/revisions.jsonl"]) {
+  for (const relative of ["agent.json", "AGENT.md", "MEMORY.md", "skills/search-flights/SKILL.md", "workflows/flight-search-flow/workflow.json", "workflows/flight-search-flow/WORKFLOW.md", "history/revisions.jsonl"]) {
     assert.ok(fs.existsSync(path.join(saved.directory, relative)), relative);
   }
   assert.throws(() => commitPreview({ token: preview.token, userConfirmation: "確認，再次提交" }), /already used/);
@@ -104,4 +114,19 @@ test("routes a task to the matching skill for current-host execution", () => {
   assert.deepEqual(prepared.execution.supportedHosts, ["codex", "claude-code"]);
   assert.match(prepared.execution.instruction, /Do not call a separate model API/);
   assert.equal(prepared.agent.framework.modelApiRequired, false);
+});
+
+test("prepares an ordered Workflow with referenced Skills", () => {
+  const preview = createPreview({ action: "create", spec: spec() });
+  commitPreview({ token: preview.token, userConfirmation: "確認" });
+  const prepared = prepareWorkflowRun({ agent: "小美", workflow: "航班查詢流程", task: "查明天的航班" });
+  assert.equal(prepared.workflow.id, "flight-search-flow");
+  assert.equal(prepared.execution.mode, "host-cli");
+  assert.match(prepared.prompt, /search-flights/);
+});
+
+test("rejects Workflow nodes that reference an unknown Skill", () => {
+  const invalid = spec();
+  invalid.workflows[0].nodes[1].skillId = "missing-skill";
+  assert.throws(() => createPreview({ action: "create", spec: invalid }), /unknown skill/);
 });

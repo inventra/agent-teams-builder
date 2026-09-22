@@ -18,6 +18,7 @@
 7. 若尚未登入，執行 `codex login` 或 `claude auth login --claudeai`，開啟官方瀏覽器頁面讓使用者自行登入。Plugin 不讀取或保存帳號密碼。
 8. 只有登入完成且 Runtime Doctor 通過才會更新成功紀錄。
 9. 產生 `下載/Agent Teams/installation-report.json` 與 `.system/update-state.json`，記錄版本、commit SHA、下載檔 SHA-256、登入、安裝與 Doctor 結果。
+10. 啟動只監聽本機的 VIXO Agents Dashboard，並建立 `Open VIXO Agents.command` 與 `Open VIXO Agents.cmd`。
 
 ## 更新
 
@@ -32,6 +33,8 @@
 - Claude Desktop 應用程式本身與 Claude Code Plugin 是不同介面。本安裝器會偵測 Claude Desktop，但本機 Plugin 的正式安裝目標是 Claude Code CLI。
 - ChatGPT Desktop／Codex 共用公開 Plugin 目錄，但本機 Marketplace 的自動安裝需要 Codex CLI；只有 ChatGPT Desktop、沒有 Codex CLI 時，安裝器會清楚報告未安裝，不會假裝成功。
 - Agent 永遠在目前宿主執行：Codex Session 由 Codex 執行，Claude Code Session 由 Claude Code 執行。本 Plugin 不使用 Anthropic API、OpenAI API 或獨立 Agent SDK。
+- Dashboard Play/排程使用已登入的 Codex 或 Claude Code CLI。Dashboard 必須保持執行，排程才會如期觸發；關機期間不會自動補跑。
+- Codex 正式 Plugin manifest 目前無法宣告自訂左側頁面。Dashboard 可獨立開啟或放進 Codex 內瀏覽器；本版不安裝非官方 DOM/CDP 注入。
 - 本機 stdio MCP 適用 Claude Code 與 Codex。要公開提交到 ChatGPT Plugin Directory，MCP Server 需另行部署成穩定的 HTTPS 服務並完成官方審核；這個 ZIP 不會假裝已完成公開上架。
 
 ## 使用範例
@@ -40,5 +43,7 @@
 - 「修改小美，新增中華航空查詢技能。」
 - 「調用小美幫我查曼谷到新加坡的班機。」
 - 「列出每個 Agent 目前有哪些 Skills。」
+- 「替小美新增一個每日航班查詢 Workflow。」
+- 「開啟 VIXO Agents Dashboard。」
 
 建立／修改一定會先顯示預覽並請你 Double Check。只有你後續明確確認，才會寫入 Agent 資料夾。

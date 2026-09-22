@@ -4,7 +4,8 @@ import { z } from "zod";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun } from "./store.mjs";
+import { spawnSync } from "node:child_process";
+import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "./store.mjs";
 
 const skillSchema = z.object({
   id: z.string(),
@@ -24,7 +25,21 @@ const agentSchema = z.object({
   purpose: z.string(),
   systemPrompt: z.string(),
   memory: z.string().optional(),
-  skills: z.array(skillSchema)
+  skills: z.array(skillSchema),
+  workflows: z.array(z.object({
+    id: z.string(),
+    name: z.string(),
+    description: z.string(),
+    triggers: z.array(z.string()).optional(),
+    nodes: z.array(z.object({
+      id: z.string(),
+      name: z.string(),
+      type: z.enum(["skill", "tool", "approval", "manual"]),
+      skillId: z.string().nullable().optional(),
+      instructions: z.string(),
+      requiresApproval: z.boolean().optional()
+    }))
+  })).optional()
 });
 
 function result(value) {
@@ -72,6 +87,23 @@ export function buildServer() {
     inputSchema: { agent: z.string(), task: z.string(), skill: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
   }, safe(prepareRun));
+  server.registerTool("workflow_prepare_run", {
+    title: "Prepare a Workflow for host-native execution",
+    description: "Resolve one saved Workflow and return its ordered node plan and exact prompt for Codex or Claude Code. No model API is called.",
+    inputSchema: { agent: z.string(), workflow: z.string(), task: z.string().optional() },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
+  }, safe(prepareWorkflowRun));
+  server.registerTool("dashboard_open", {
+    title: "Open the VIXO Agents Dashboard",
+    description: "Start the local visual Agent, Skill, Workflow, run, and schedule dashboard, then open it in the user's browser.",
+    inputSchema: {},
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true }
+  }, safe(() => {
+    const script = path.join(packageRoot, "scripts", "vixo-agents-dashboard.mjs");
+    const run = spawnSync(process.execPath, [script, "open"], { encoding: "utf8", env: process.env, windowsHide: true });
+    if (run.status !== 0) throw new Error((run.stderr || run.stdout || "Unable to open VIXO Agents Dashboard").trim());
+    return JSON.parse(run.stdout);
+  }));
   return server;
 }
 

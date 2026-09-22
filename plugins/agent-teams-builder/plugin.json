@@ -1,21 +1,21 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-teams-builder",
-  "version": "1.2.0",
-  "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
+  "version": "1.3.0",
+  "description": "Build visible VIXO employee teams with confirmed SOPs, skills, workflows, schedules, and host-native execution.",
   "license": "MIT",
   "extensions": {
     "com.openai": {
       "interface": {
-        "displayName": "Agent Teams Builder",
-        "shortDescription": "Build and invoke reusable local Agents.",
+        "displayName": "VIXO Agent Teams Builder",
+        "shortDescription": "Build visible Agents, Skills, and Workflows.",
         "developerName": "LazyOffice",
         "category": "Productivity",
-        "capabilities": ["Interactive", "Write", "MCP", "Host-native"],
+        "capabilities": ["Interactive", "Write", "MCP", "Host-native", "Workflow Dashboard"],
         "defaultPrompt": [
           "把目前流程建立成 Agent，先讓我確認 SOP。",
-          "列出我的 Agent Teams 與每個 Agent 的技能。",
-          "調用我的小幫手執行這個任務。"
+          "列出我的 VIXO Agents、Skills 與 Workflows。",
+          "開啟 VIXO Agents Dashboard。"
         ]
       }
     }

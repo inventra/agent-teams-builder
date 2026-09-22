@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>VIXO Agents</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside>
+      <div class="brand"><span class="brand-mark">V</span><div><strong>VIXO Agents</strong><small>Agent Team Console</small></div></div>
+      <nav id="agent-nav"></nav>
+      <div class="aside-foot"><span class="dot"></span><span id="host-status">正在連線…</span></div>
+    </aside>
+    <main>
+      <header>
+        <div><div class="eyebrow">VIXO AGENT TEAM</div><h1 id="page-title">員工總覽</h1><p id="page-subtitle">把訓練結果、技能與執行流程放在同一個畫面。</p></div>
+        <button id="refresh" class="secondary">重新整理</button>
+      </header>
+      <section id="summary" class="summary"></section>
+      <section id="content"></section>
+    </main>
+  </div>
+  <dialog id="schedule-dialog">
+    <form id="schedule-form" method="dialog">
+      <button class="dialog-close" value="cancel" aria-label="關閉">×</button>
+      <div class="eyebrow">AUTOMATION</div><h2>設定每日排程</h2>
+      <input type="hidden" name="agentId"><input type="hidden" name="workflowId">
+      <label>執行時間<input name="time" type="time" value="08:00" required></label>
+      <label>執行宿主<select name="host"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+      <label>任務說明<textarea name="task" rows="3">依排程執行這個 Workflow</textarea></label>
+      <button class="primary" value="default">儲存排程</button>
+    </form>
+  </dialog>
+  <div id="toast" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

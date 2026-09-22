@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const AGENT_SCHEMA_VERSION = 1;
+const AGENT_SCHEMA_VERSION = 2;
 const DRAFT_TTL_MS = 15 * 60 * 1000;
 const SAFE_ID = /^[a-z][a-z0-9-]{0,63}$/;
 const AFFIRMATIVE_CONFIRMATION = /^(確認|同意|是|好|可以|請建立|請修改|yes\b|confirm\b|approved\b|ok\b)/i;
@@ -90,6 +90,12 @@ export function ensureAgentTeamsRoot() {
       ""
     ].join("\n"));
   }
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".") || !SAFE_ID.test(entry.name)) continue;
+    const directory = ensureWithin(root, path.join(root, entry.name));
+    if (fs.lstatSync(directory).isSymbolicLink()) continue;
+    fs.mkdirSync(path.join(directory, "workflows"), { recursive: true });
+  }
   return root;
 }
 
@@ -106,12 +112,50 @@ function normalizeSkill(skill, index) {
   };
 }
 
+function normalizeWorkflowNode(node, workflowIndex, nodeIndex, skillIds) {
+  const field = `workflows[${workflowIndex}].nodes[${nodeIndex}]`;
+  assert(node && typeof node === "object" && !Array.isArray(node), `${field} must be an object`);
+  const type = cleanString(node.type || "skill", `${field}.type`, 20);
+  assert(["skill", "tool", "approval", "manual"].includes(type), `${field}.type must be skill, tool, approval, or manual`);
+  const skillId = node.skillId ? normalizeId(node.skillId, `${field}.skillId`) : null;
+  if (type === "skill") {
+    assert(skillId, `${field}.skillId is required for skill nodes`);
+    assert(skillIds.has(skillId), `${field}.skillId references an unknown skill: ${skillId}`);
+  }
+  return {
+    id: normalizeId(node.id, `${field}.id`),
+    name: cleanString(node.name, `${field}.name`, 120),
+    type,
+    skillId,
+    instructions: cleanString(node.instructions, `${field}.instructions`, 2000),
+    requiresApproval: type === "approval" || node.requiresApproval === true
+  };
+}
+
+function normalizeWorkflow(workflow, index, skillIds) {
+  const field = `workflows[${index}]`;
+  assert(workflow && typeof workflow === "object" && !Array.isArray(workflow), `${field} must be an object`);
+  const nodes = (workflow.nodes || []).map((node, nodeIndex) => normalizeWorkflowNode(node, index, nodeIndex, skillIds));
+  assert(nodes.length > 0, `${field}.nodes must contain at least one node`);
+  assert(new Set(nodes.map((node) => node.id)).size === nodes.length, `${field}.node ids must be unique`);
+  return {
+    id: normalizeId(workflow.id, `${field}.id`),
+    name: cleanString(workflow.name, `${field}.name`, 120),
+    description: cleanString(workflow.description, `${field}.description`, 1200),
+    triggers: cleanStringArray(workflow.triggers, `${field}.triggers`, { maxItems: 30, maxLength: 160 }),
+    nodes
+  };
+}
+
 export function normalizeSpec(raw, previous = null) {
   assert(raw && typeof raw === "object" && !Array.isArray(raw), "spec must be an object");
   const id = normalizeId(raw.id);
   const skills = (raw.skills || []).map(normalizeSkill);
   assert(skills.length > 0, "At least one skill is required");
   assert(new Set(skills.map((skill) => skill.id)).size === skills.length, "Skill ids must be unique");
+  const skillIds = new Set(skills.map((skill) => skill.id));
+  const workflows = (raw.workflows || []).map((workflow, index) => normalizeWorkflow(workflow, index, skillIds));
+  assert(new Set(workflows.map((workflow) => workflow.id)).size === workflows.length, "Workflow ids must be unique");
   const now = new Date().toISOString();
   return {
     schemaVersion: AGENT_SCHEMA_VERSION,
@@ -131,7 +175,8 @@ export function normalizeSpec(raw, previous = null) {
     },
     systemPrompt: cleanString(raw.systemPrompt, "systemPrompt", 12000),
     memory: cleanString(raw.memory || "尚無長期記憶。", "memory", 20000),
-    skills
+    skills,
+    workflows
   };
 }
 
@@ -172,6 +217,12 @@ export function listAgents() {
           description: agent.description,
           version: agent.version,
           skills: (agent.skills || []).map((skill) => ({ id: skill.id, name: skill.name, description: skill.description })),
+          workflows: (agent.workflows || []).map((workflow) => ({
+            id: workflow.id,
+            name: workflow.name,
+            description: workflow.description,
+            nodeCount: workflow.nodes?.length || 0
+          })),
           updatedAt: agent.updatedAt
         }];
       } catch {
@@ -256,6 +307,28 @@ function renderMemory(agent) {
   ].join("\n");
 }
 
+function renderWorkflowMarkdown(agent, workflow) {
+  return [
+    "---",
+    `name: ${workflow.id}`,
+    `description: ${JSON.stringify(workflow.description)}`,
+    "---",
+    "",
+    `# ${agent.displayName}｜${workflow.name}`,
+    "",
+    workflow.description,
+    "",
+    "## 觸發條件",
+    "",
+    ...(workflow.triggers.length ? workflow.triggers.map((trigger) => `- ${trigger}`) : ["- 由使用者在 VIXO Agents 頁面手動執行。"]),
+    "",
+    "## 流程節點",
+    "",
+    ...workflow.nodes.map((node, index) => `${index + 1}. **${node.name}** [${node.type}]${node.skillId ? ` → Skill: ${node.skillId}` : ""}\n   ${node.instructions}${node.requiresApproval ? "\n   需要人工確認後才能繼續。" : ""}`),
+    ""
+  ].join("\n");
+}
+
 export function createPreview({ action, spec }) {
   const requestedAction = action === "update" ? "update" : "create";
   const serializedInput = JSON.stringify(spec || {});
@@ -288,6 +361,7 @@ export function commitPreview({ token, userConfirmation }) {
   if (fs.existsSync(directory)) assert(!fs.lstatSync(directory).isSymbolicLink(), "Refusing to write through a symbolic link");
   fs.mkdirSync(path.join(directory, "history"), { recursive: true });
   fs.mkdirSync(path.join(directory, "skills"), { recursive: true });
+  fs.mkdirSync(path.join(directory, "workflows"), { recursive: true });
   const retainedSkills = new Set(spec.skills.map((skill) => skill.id));
   const existingSkillRoot = path.join(directory, "skills");
   const removed = fs.readdirSync(existingSkillRoot, { withFileTypes: true })
@@ -305,6 +379,25 @@ export function commitPreview({ token, userConfirmation }) {
     const skillDirectory = ensureWithin(directory, path.join(directory, "skills", skill.id));
     fs.mkdirSync(skillDirectory, { recursive: true });
     writeAtomic(path.join(skillDirectory, "SKILL.md"), renderSkillMarkdown(spec, skill));
+  }
+  const retainedWorkflows = new Set((spec.workflows || []).map((workflow) => workflow.id));
+  const existingWorkflowRoot = path.join(directory, "workflows");
+  const removedWorkflows = fs.readdirSync(existingWorkflowRoot, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && SAFE_ID.test(entry.name) && !retainedWorkflows.has(entry.name));
+  if (removedWorkflows.length) {
+    const archiveRoot = path.join(directory, "history", "removed-workflows", new Date().toISOString().replace(/[:.]/g, "-"));
+    fs.mkdirSync(archiveRoot, { recursive: true });
+    for (const entry of removedWorkflows) {
+      const oldPath = ensureWithin(directory, path.join(existingWorkflowRoot, entry.name));
+      assert(!fs.lstatSync(oldPath).isSymbolicLink(), "Refusing to archive a symbolic-link workflow directory");
+      fs.renameSync(oldPath, path.join(archiveRoot, entry.name));
+    }
+  }
+  for (const workflow of spec.workflows || []) {
+    const workflowDirectory = ensureWithin(directory, path.join(directory, "workflows", workflow.id));
+    fs.mkdirSync(workflowDirectory, { recursive: true });
+    writeAtomic(path.join(workflowDirectory, "workflow.json"), `${JSON.stringify(workflow, null, 2)}\n`);
+    writeAtomic(path.join(workflowDirectory, "WORKFLOW.md"), renderWorkflowMarkdown(spec, workflow));
   }
   writeAtomic(path.join(directory, "agent.json"), `${JSON.stringify(spec, null, 2)}\n`);
   writeAtomic(path.join(directory, "AGENT.md"), renderAgentMarkdown(spec));
@@ -354,6 +447,47 @@ export function prepareRun({ agent: reference, task, skill: requestedSkill }) {
       mode: "current-host",
       supportedHosts: ["codex", "claude-code"],
       instruction: "Execute this prompt with the current Codex or Claude Code session and its available tools. Do not call a separate model API."
+    },
+    prompt
+  };
+}
+
+export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkflow, task = "執行這個 Workflow" }) {
+  const agent = getAgent(reference);
+  const needle = cleanString(requestedWorkflow, "workflow", 120).toLocaleLowerCase("zh-TW");
+  const workflow = (agent.workflows || []).find((item) => [item.id, item.name].some((value) => value.toLocaleLowerCase("zh-TW") === needle));
+  assert(workflow, `Workflow not found: ${requestedWorkflow}`);
+  const skillById = new Map(agent.skills.map((skill) => [skill.id, skill]));
+  const cleanTask = cleanString(task, "task", 8000);
+  const prompt = [
+    agent.systemPrompt,
+    "",
+    `你現在以 ${agent.displayName} 身分執行 Workflow：${workflow.name}。`,
+    `使用者任務：${cleanTask}`,
+    "",
+    "請依序執行節點；遇到 approval 或 requiresApproval 節點必須停下來取得使用者明確確認：",
+    ...workflow.nodes.flatMap((node, index) => {
+      const skill = node.skillId ? skillById.get(node.skillId) : null;
+      return [
+        `${index + 1}. [${node.type}] ${node.name}${node.requiresApproval ? " [REQUIRES APPROVAL]" : ""}`,
+        `   指示：${node.instructions}`,
+        ...(skill ? [
+          `   Skill：${skill.name} (${skill.id})`,
+          ...skill.steps.map((step, stepIndex) => `   ${stepIndex + 1}. ${step}`),
+          `   完成條件：${skill.successCriteria.join("；")}`
+        ] : [])
+      ];
+    })
+  ].join("\n");
+  return {
+    agent: { id: agent.id, displayName: agent.displayName },
+    workflow,
+    task: cleanTask,
+    execution: {
+      mode: "host-cli",
+      supportedHosts: ["codex", "claude-code"],
+      requiresApprovalNodes: workflow.nodes.some((node) => node.requiresApproval),
+      instruction: "Run with the installed and signed-in Codex or Claude Code CLI. No separate Anthropic/OpenAI API key is used."
     },
     prompt
   };

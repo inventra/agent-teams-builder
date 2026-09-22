@@ -215,6 +215,39 @@ function configureClaude(marketplaceRoot) {
   return { installed: install.ok, output: install.stdout, error: install.ok ? null : install.stderr || install.error };
 }
 
+function installDashboardLaunchers(agentTeamsRoot, pluginRoot) {
+  const dashboardScript = path.join(pluginRoot, "scripts", "vixo-agents-dashboard.mjs");
+  const macLauncher = path.join(agentTeamsRoot, "Open VIXO Agents.command");
+  const windowsLauncher = path.join(agentTeamsRoot, "Open VIXO Agents.cmd");
+  fs.writeFileSync(macLauncher, [
+    "#!/bin/bash",
+    `exec node ${JSON.stringify(dashboardScript)} open`,
+    ""
+  ].join("\n"), { encoding: "utf8", mode: 0o755 });
+  fs.writeFileSync(windowsLauncher, [
+    "@echo off",
+    `node "${dashboardScript}" open`,
+    "if errorlevel 1 pause",
+    ""
+  ].join("\r\n"), "utf8");
+  return { mac: macLauncher, windows: windowsLauncher };
+}
+
+function launchDashboard(agentTeamsRoot, pluginRoot, { open = true, restart = false } = {}) {
+  if (process.env.AGENT_TEAMS_SKIP_DASHBOARD === "1" || process.env.AGENT_TEAMS_SKIP_NPM === "1") {
+    return { started: false, skipped: true };
+  }
+  const script = path.join(pluginRoot, "scripts", "vixo-agents-dashboard.mjs");
+  if (!fs.existsSync(script)) return { started: false, error: "Dashboard runtime is not installed" };
+  if (restart) commandResult(process.execPath, [script, "stop"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
+  const result = commandResult(process.execPath, [script, open ? "open" : "start"], {
+    env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot }
+  });
+  let runtime = null;
+  try { runtime = JSON.parse(result.stdout); } catch {}
+  return { started: result.ok, runtime, error: result.ok ? null : result.stderr || result.error || result.stdout };
+}
+
 export function install(options = {}) {
   const sourceRoot = options.sourceRoot || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
   const agentTeamsRoot = path.resolve(options.agentTeamsRoot || process.env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
@@ -258,6 +291,7 @@ export function install(options = {}) {
       : { installed: false, error: "Claude Code login was not completed; run claude auth login --claudeai and retry." };
   }
   const pluginRoot = path.join(marketplaceRoot, "plugins", PLUGIN);
+  const dashboardLaunchers = installDashboardLaunchers(agentTeamsRoot, pluginRoot);
   let doctor = { ok: false, error: "skipped" };
   if (!skipNpm) {
     const check = commandResult("node", [path.join(pluginRoot, "scripts", "agent-teams-cli.mjs"), "doctor"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
@@ -275,6 +309,7 @@ export function install(options = {}) {
     fs.rmSync(copied.backup, { recursive: true, force: true });
     backupRemoved = true;
   }
+  const dashboard = installationHealthy ? launchDashboard(agentTeamsRoot, pluginRoot, { restart: true }) : { started: false, error: "Plugin installation is not healthy" };
   const report = {
     installedAt: new Date().toISOString(),
     installedVersion: copied.installedVersion,
@@ -291,10 +326,13 @@ export function install(options = {}) {
     authentication,
     results,
     doctor,
+    dashboard,
+    dashboardLaunchers,
     notes: [
       "Claude Desktop is detected separately; Claude Code CLI is the supported local plugin host used by this installer.",
       "ChatGPT Desktop and Codex share the public plugin directory, but local CLI marketplace installation requires Codex CLI.",
       "Agent execution always uses the current Codex or Claude Code host. No Anthropic/OpenAI model API key is used by the plugin.",
+      "VIXO Agents Dashboard runs only on 127.0.0.1 and uses a random local bearer token for its API.",
       "Start a new Claude Code/Codex session after installation."
     ]
   };
@@ -462,13 +500,20 @@ async function main() {
   try {
     const update = await maybeRunSelfUpdate();
     if (update.handled) {
+      if (["up-to-date", "offline-current"].includes(update.status)) {
+        const agentRoot = path.resolve(process.env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
+        const installedPlugin = path.join(agentRoot, ".system", "marketplace", "plugins", PLUGIN);
+        const dashboard = launchDashboard(agentRoot, installedPlugin);
+        if (dashboard.started) console.log("VIXO Agents Dashboard 已開啟。");
+      }
       if (update.ok === false) process.exitCode = 1;
       return;
     }
     const report = install();
     console.log("\nAgent Teams Builder 安裝完成。\n");
     console.log(JSON.stringify(report, null, 2));
-    console.log("\n請開啟新的 Claude Code／Codex Session，然後說：列出我的 Agent Teams。\n");
+    console.log("\nVIXO Agents Dashboard 已開啟。也可隨時雙擊下載/Agent Teams 內的 Open VIXO Agents 啟動檔。\n");
+    console.log("請開啟新的 Claude Code／Codex Session，然後說：列出我的 VIXO Agents。\n");
     if (Object.values(report.results).some((item) => !item.installed) || (!report.doctor.ok && process.env.AGENT_TEAMS_SKIP_NPM !== "1")) process.exitCode = 1;
   } catch (error) {
     console.error(`\n安裝／更新失敗：${error instanceof Error ? error.message : String(error)}\n`);
