@@ -13,7 +13,7 @@
 
 ## 頁面提示與一鍵自動更新
 
-從 v1.6.0 起，VIXO Agents 頁面會定期檢查公開 GitHub repo 的 `main`。發現新版時會顯示更新提示，按下「立即更新」即可同步更新 Plugin、Dashboard、Skills 與執行功能，完成後會自動重新啟動。頁面右上角也可隨時按「檢查更新」。
+從 v1.6.0 起，VIXO Agents 頁面啟動時會檢查公開 GitHub repo 的 `main`，開啟期間每 15 分鐘重新確認。發現新版時會顯示更新提示，按下「立即更新」即可同步更新 Plugin、Dashboard、Skills 與執行功能，完成後會自動重新啟動。頁面右上角也可隨時按「檢查更新」。
 
 `install.command`、`Install-Agent-Builder.cmd` 與 `Install-Agent-Builder.ps1` 仍同時是安裝器與更新器。每次點擊也會檢查 `main`：
 
