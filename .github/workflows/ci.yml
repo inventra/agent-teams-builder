@@ -62,6 +62,7 @@ jobs:
           & .\Install-Agent-Builder.test.exe
           if ($LASTEXITCODE -ne 0) { throw "Windows EXE installer failed with exit code $LASTEXITCODE" }
           powershell -ExecutionPolicy Bypass -File .\Install-Agent-Builder.ps1
+          if ($LASTEXITCODE -ne 0) { throw "Windows PowerShell installer failed with exit code $LASTEXITCODE" }
           codex plugin list | Select-String 'agent-teams-builder@agent-teams-local'
           claude plugin list | Select-String 'agent-teams-builder@agent-teams-local'
           $dashboard = Join-Path $env:AGENT_TEAMS_INSTALL_ROOT ".system\marketplace\plugins\agent-teams-builder\scripts\vixo-agents-dashboard.mjs"

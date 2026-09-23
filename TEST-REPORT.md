@@ -12,6 +12,7 @@
 - 實機首次按頁面更新時，更新器安全失敗並保留舊版；定位為安裝階段的一次性 `SKIP_UPDATE` 被背景服務繼承。已在 Dashboard、獨立 runner 與子更新器三層清除／覆寫該旗標，並納入後續實機重測。
 - 修正後的頁面更新實機重測通過：Dashboard 從 commit `5597442054f9` 偵測到 `4d4c630f5a5a`，API 回傳 202 後由獨立 runner 完成更新；狀態為 `succeeded`，Codex 與 Claude Code 均安裝成功，Runtime Doctor 通過，Dashboard 與 Codex sidebar Bridge 重新啟動且 `frameLoaded=true`。
 - 更新後再次查詢，安裝版本為 `1.6.0+codex.20260923192303-4d4c630f5a5a`，本機與 GitHub 完整 commit SHA 相同，`available=false`，證明不會反覆提示同一版。
+- Windows CI log 複查發現：EXE 安裝成功，但傳統 Windows PowerShell 5 會錯誤解碼無 BOM 的中文 `.ps1` 訊息；已將 PowerShell 備援入口改為 ASCII 訊息，並在 CI 加上非零 exit code 強制失敗檢查，避免假通過。
 
 ## v1.6.0 已知邊界
 
