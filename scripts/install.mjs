@@ -413,8 +413,10 @@ export function install(options = {}) {
   const authentication = {};
   if (compatibility.codex?.compatible) authentication.codex = ensureHostAuthentication("codex", { skipLogin });
   if (compatibility.claude?.compatible) authentication.claude = ensureHostAuthentication("claude", { skipLogin });
+  const installedRuntime = runtimePaths(path.join(agentTeamsRoot, ".system", "runtime"), runtimePlatformKey());
+  const stopRuntimeNode = installedRuntime?.node && fs.existsSync(installedRuntime.node) ? installedRuntime.node : process.execPath;
+  stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, stopRuntimeNode);
   const runtime = installBundledRuntime(sourceRoot, agentTeamsRoot);
-  stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, runtime.node);
   const copied = copyRelease(sourceRoot, marketplaceRoot, skipNpm, runtimeVersion, runtime);
   const updaterScript = installUpdaterScript(sourceRoot, agentTeamsRoot);
   const results = {};
