@@ -172,6 +172,54 @@ function applyRuntimeVersion(stagedMarketplace, version) {
   patchJsonVersion(path.join(stagedMarketplace, ".claude-plugin", "marketplace.json"), version, true);
 }
 
+function runtimePlatformKey(platform = process.platform, arch = process.arch) {
+  if (platform === "darwin") return `macos-${arch === "x64" ? "x64" : "arm64"}`;
+  if (platform === "win32") return "windows-x64";
+  return null;
+}
+
+function runtimePaths(root, key) {
+  if (!key) return null;
+  const directory = path.join(root, key);
+  const windows = key.startsWith("windows-");
+  return {
+    directory,
+    node: path.join(directory, windows ? "node.exe" : "node"),
+    npmCli: windows
+      ? path.join(directory, "node_modules", "npm", "bin", "npm-cli.js")
+      : path.join(directory, "lib", "node_modules", "npm", "bin", "npm-cli.js")
+  };
+}
+
+function installBundledRuntime(sourceRoot, agentTeamsRoot) {
+  const key = runtimePlatformKey();
+  const source = runtimePaths(path.join(sourceRoot, "runtime"), key);
+  const installedRoot = path.join(agentTeamsRoot, ".system", "runtime");
+  const installed = runtimePaths(installedRoot, key);
+  if (source && fs.existsSync(source.node) && fs.existsSync(source.npmCli)) {
+    const staged = `${installed.directory}.tmp-${process.pid}-${Date.now()}`;
+    fs.rmSync(staged, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(staged), { recursive: true });
+    fs.cpSync(source.directory, staged, { recursive: true });
+    fs.rmSync(installed.directory, { recursive: true, force: true });
+    fs.renameSync(staged, installed.directory);
+    if (process.platform !== "win32") fs.chmodSync(installed.node, 0o755);
+    return { ...installed, bundled: true, key };
+  }
+  if (installed && fs.existsSync(installed.node) && fs.existsSync(installed.npmCli)) {
+    return { ...installed, bundled: true, key };
+  }
+  return { node: process.execPath, npmCli: null, directory: path.dirname(process.execPath), bundled: false, key: null };
+}
+
+function patchMcpRuntime(stagedMarketplace, runtimeNode) {
+  const file = path.join(stagedMarketplace, "plugins", PLUGIN, ".mcp.json");
+  const value = readJson(file);
+  if (!value.mcpServers?.["agent-teams"]) throw new Error("agent-teams MCP configuration is missing");
+  value.mcpServers["agent-teams"].command = runtimeNode;
+  fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
 function moveDirectoryAcrossVolumes(source, destination) {
   try {
     fs.renameSync(source, destination);
@@ -182,21 +230,30 @@ function moveDirectoryAcrossVolumes(source, destination) {
   }
 }
 
-function copyRelease(sourceRoot, targetMarketplace, skipNpm, runtimeVersion) {
+function copyRelease(sourceRoot, targetMarketplace, skipNpm, runtimeVersion, runtime) {
   const sourcePlugin = path.join(sourceRoot, "plugins", PLUGIN);
   if (!fs.existsSync(path.join(sourcePlugin, "package.json"))) throw new Error(`Plugin source not found: ${sourcePlugin}`);
   const stagingRoot = fs.mkdtempSync(path.join(os.tmpdir(), "agent-teams-install-"));
   const stagedMarketplace = path.join(stagingRoot, "marketplace");
   const stagedPlugin = path.join(stagedMarketplace, "plugins", PLUGIN);
   fs.mkdirSync(path.dirname(stagedPlugin), { recursive: true });
-  fs.cpSync(sourcePlugin, stagedPlugin, { recursive: true, filter: (source) => !source.includes(`${path.sep}node_modules${path.sep}`) && !source.endsWith(`${path.sep}node_modules`) });
+  const packagedDependencies = fs.existsSync(path.join(sourceRoot, "runtime")) && fs.existsSync(path.join(sourcePlugin, "node_modules"));
+  fs.cpSync(sourcePlugin, stagedPlugin, {
+    recursive: true,
+    filter: (source) => packagedDependencies || (!source.includes(`${path.sep}node_modules${path.sep}`) && !source.endsWith(`${path.sep}node_modules`))
+  });
   fs.mkdirSync(path.join(stagedMarketplace, ".agents", "plugins"), { recursive: true });
   fs.mkdirSync(path.join(stagedMarketplace, ".claude-plugin"), { recursive: true });
   fs.copyFileSync(path.join(sourceRoot, ".agents", "plugins", "marketplace.json"), path.join(stagedMarketplace, ".agents", "plugins", "marketplace.json"));
   fs.copyFileSync(path.join(sourceRoot, ".claude-plugin", "marketplace.json"), path.join(stagedMarketplace, ".claude-plugin", "marketplace.json"));
   applyRuntimeVersion(stagedMarketplace, runtimeVersion);
-  if (!skipNpm) {
-    const npm = commandResult(process.platform === "win32" ? "npm.cmd" : "npm", ["ci", "--omit=dev", "--no-audit", "--no-fund"], { cwd: stagedPlugin, stdio: ["ignore", "pipe", "pipe"] });
+  patchMcpRuntime(stagedMarketplace, runtime.node);
+  if (!skipNpm && !packagedDependencies) {
+    const npmCommand = runtime.npmCli ? runtime.node : (process.platform === "win32" ? "npm.cmd" : "npm");
+    const npmArgs = runtime.npmCli
+      ? [runtime.npmCli, "ci", "--omit=dev", "--no-audit", "--no-fund"]
+      : ["ci", "--omit=dev", "--no-audit", "--no-fund"];
+    const npm = commandResult(npmCommand, npmArgs, { cwd: stagedPlugin, stdio: ["ignore", "pipe", "pipe"] });
     if (!npm.ok) throw new Error(`Runtime dependency installation failed: ${npm.stderr || npm.error}`);
   }
   fs.mkdirSync(path.dirname(targetMarketplace), { recursive: true });
@@ -238,32 +295,57 @@ function configureClaude(marketplaceRoot) {
   return { installed: install.ok, output: install.stdout, error: install.ok ? null : install.stderr || install.error };
 }
 
-function installDashboardLaunchers(agentTeamsRoot, pluginRoot) {
-  const dashboardScript = path.join(pluginRoot, "scripts", "vixo-agents-dashboard.mjs");
+function installDashboardLaunchers(agentTeamsRoot, pluginRoot, runtimeNode) {
+  const embedScript = path.join(pluginRoot, "scripts", "vixo-codex-embed.mjs");
   const macLauncher = path.join(agentTeamsRoot, "Open VIXO Agents.command");
   const windowsLauncher = path.join(agentTeamsRoot, "Open VIXO Agents.cmd");
   fs.writeFileSync(macLauncher, [
     "#!/bin/bash",
-    `exec node ${JSON.stringify(dashboardScript)} open`,
+    `exec ${JSON.stringify(runtimeNode)} ${JSON.stringify(embedScript)} open`,
     ""
   ].join("\n"), { encoding: "utf8", mode: 0o755 });
   fs.writeFileSync(windowsLauncher, [
     "@echo off",
-    `node "${dashboardScript}" open`,
+    `"${runtimeNode}" "${embedScript}" open`,
     "if errorlevel 1 pause",
     ""
   ].join("\r\n"), "utf8");
   return { mac: macLauncher, windows: windowsLauncher };
 }
 
-function launchDashboard(agentTeamsRoot, pluginRoot, { open = true, restart = false } = {}) {
+function stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, runtimeNode = process.execPath) {
+  const existingPlugin = path.join(marketplaceRoot, "plugins", PLUGIN);
+  const env = { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot };
+  const embed = path.join(existingPlugin, "scripts", "vixo-codex-embed.mjs");
+  const dashboard = path.join(existingPlugin, "scripts", "vixo-agents-dashboard.mjs");
+  if (fs.existsSync(embed)) commandResult(runtimeNode, [embed, "stop"], { env });
+  if (fs.existsSync(dashboard)) commandResult(runtimeNode, [dashboard, "stop"], { env });
+}
+
+function launchDashboard(agentTeamsRoot, pluginRoot, runtimeNode, { open = true, restart = false } = {}) {
   if (process.env.AGENT_TEAMS_SKIP_DASHBOARD === "1" || process.env.AGENT_TEAMS_SKIP_NPM === "1") {
     return { started: false, skipped: true };
   }
   const script = path.join(pluginRoot, "scripts", "vixo-agents-dashboard.mjs");
   if (!fs.existsSync(script)) return { started: false, error: "Dashboard runtime is not installed" };
-  if (restart) commandResult(process.execPath, [script, "stop"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
-  const result = commandResult(process.execPath, [script, open ? "open" : "start"], {
+  if (restart) commandResult(runtimeNode, [script, "stop"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
+  const result = commandResult(runtimeNode, [script, open ? "open" : "start"], {
+    env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot }
+  });
+  let runtime = null;
+  try { runtime = JSON.parse(result.stdout); } catch {}
+  return { started: result.ok, runtime, error: result.ok ? null : result.stderr || result.error || result.stdout };
+}
+
+function launchCodexEmbed(agentTeamsRoot, pluginRoot, runtimeNode) {
+  if (
+    process.env.AGENT_TEAMS_SKIP_EMBED === "1"
+    || process.env.AGENT_TEAMS_SKIP_DASHBOARD === "1"
+    || process.env.AGENT_TEAMS_SKIP_NPM === "1"
+  ) return { started: false, skipped: true };
+  const script = path.join(pluginRoot, "scripts", "vixo-codex-embed.mjs");
+  if (!fs.existsSync(script)) return { started: false, error: "Codex embed runtime is not installed" };
+  const result = commandResult(runtimeNode, [script, "open"], {
     env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot }
   });
   let runtime = null;
@@ -301,7 +383,9 @@ export function install(options = {}) {
   const authentication = {};
   if (compatibility.codex?.compatible) authentication.codex = ensureHostAuthentication("codex", { skipLogin });
   if (compatibility.claude?.compatible) authentication.claude = ensureHostAuthentication("claude", { skipLogin });
-  const copied = copyRelease(sourceRoot, marketplaceRoot, skipNpm, runtimeVersion);
+  const runtime = installBundledRuntime(sourceRoot, agentTeamsRoot);
+  stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, runtime.node);
+  const copied = copyRelease(sourceRoot, marketplaceRoot, skipNpm, runtimeVersion, runtime);
   const results = {};
   if (compatibility.codex?.compatible) {
     results.codex = authentication.codex.loggedIn || authentication.codex.skipped
@@ -314,10 +398,10 @@ export function install(options = {}) {
       : { installed: false, error: "Claude Code login was not completed; run claude auth login --claudeai and retry." };
   }
   const pluginRoot = path.join(marketplaceRoot, "plugins", PLUGIN);
-  const dashboardLaunchers = installDashboardLaunchers(agentTeamsRoot, pluginRoot);
+  const dashboardLaunchers = installDashboardLaunchers(agentTeamsRoot, pluginRoot, runtime.node);
   let doctor = { ok: false, error: "skipped" };
   if (!skipNpm) {
-    const check = commandResult("node", [path.join(pluginRoot, "scripts", "agent-teams-cli.mjs"), "doctor"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
+    const check = commandResult(runtime.node, [path.join(pluginRoot, "scripts", "agent-teams-cli.mjs"), "doctor"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
     if (check.ok) {
       try { doctor = JSON.parse(check.stdout); }
       catch { doctor = { ok: false, error: "Doctor returned invalid JSON" }; }
@@ -332,7 +416,12 @@ export function install(options = {}) {
     fs.rmSync(copied.backup, { recursive: true, force: true });
     backupRemoved = true;
   }
-  const dashboard = installationHealthy ? launchDashboard(agentTeamsRoot, pluginRoot, { restart: true }) : { started: false, error: "Plugin installation is not healthy" };
+  const dashboard = installationHealthy
+    ? launchDashboard(agentTeamsRoot, pluginRoot, runtime.node, { open: false, restart: true })
+    : { started: false, error: "Plugin installation is not healthy" };
+  const codexEmbed = installationHealthy && dashboard.started
+    ? launchCodexEmbed(agentTeamsRoot, pluginRoot, runtime.node)
+    : { started: false, error: "Dashboard is not healthy" };
   const report = {
     installedAt: new Date().toISOString(),
     installedVersion: copied.installedVersion,
@@ -350,12 +439,15 @@ export function install(options = {}) {
     results,
     doctor,
     dashboard,
+    codexEmbed,
     dashboardLaunchers,
+    runtime: { bundled: runtime.bundled, key: runtime.key, node: runtime.node },
     notes: [
       "Claude Desktop is detected separately; Claude Code CLI is the supported local plugin host used by this installer.",
       "ChatGPT Desktop and Codex share the public plugin directory, but local CLI marketplace installation requires Codex CLI.",
       "Agent execution always uses the current Codex or Claude Code host. No Anthropic/OpenAI model API key is used by the plugin.",
       "VIXO Agents Dashboard runs only on 127.0.0.1 and uses a random local bearer token for its API.",
+      "When Codex exposes a trusted loopback CDP renderer, the launcher adds a VIXO Agents sidebar entry; otherwise it opens the Dashboard in Codex's native browser panel.",
       "Start a new Claude Code/Codex session after installation."
     ]
   };
@@ -526,8 +618,11 @@ async function main() {
       if (["up-to-date", "offline-current"].includes(update.status)) {
         const agentRoot = path.resolve(process.env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
         const installedPlugin = path.join(agentRoot, ".system", "marketplace", "plugins", PLUGIN);
-        const dashboard = launchDashboard(agentRoot, installedPlugin);
-        if (dashboard.started) console.log("VIXO Agents Dashboard 已開啟。");
+        const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+        const runtime = installBundledRuntime(sourceRoot, agentRoot);
+        const dashboard = launchDashboard(agentRoot, installedPlugin, runtime.node, { open: false });
+        const embed = dashboard.started ? launchCodexEmbed(agentRoot, installedPlugin, runtime.node) : { started: false };
+        if (embed.started) console.log("VIXO Agents 已在 Codex 側欄或原生面板中開啟。");
       }
       if (update.ok === false) process.exitCode = 1;
       return;
@@ -535,7 +630,7 @@ async function main() {
     const report = install();
     console.log("\nAgent Teams Builder 安裝完成。\n");
     console.log(JSON.stringify(report, null, 2));
-    console.log("\nVIXO Agents Dashboard 已開啟。也可隨時雙擊下載/Agent Teams 內的 Open VIXO Agents 啟動檔。\n");
+    console.log("\nVIXO Agents 已在 Codex 側欄或原生面板中開啟。也可隨時雙擊下載/Agent Teams 內的 Open VIXO Agents 啟動檔。\n");
     console.log("請開啟新的 Claude Code／Codex Session，然後說：列出我的 VIXO Agents。\n");
     if (Object.values(report.results).some((item) => !item.installed) || (!report.doctor.ok && process.env.AGENT_TEAMS_SKIP_NPM !== "1")) process.exitCode = 1;
   } catch (error) {

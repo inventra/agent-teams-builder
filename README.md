@@ -4,12 +4,12 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.3.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.4.0.zip`，解壓縮後：
 
-- macOS：雙擊 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
-- Windows：雙擊 `Install-Agent-Builder.cmd`；也可執行 `Install-Agent-Builder.ps1`。
+- macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
+- Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
 
-需求：Node.js 18 以上，以及 Claude Code 2.1.265 以上或 Codex CLI 0.148.0 以上。安裝器會自動偵測可用環境；兩個 CLI 都存在時，會同時安裝並啟用。若宿主尚未登入，安裝器會啟動官方瀏覽器登入流程：Codex 使用 `codex login`，Claude Code 使用 `claude auth login --claudeai`。
+壓縮包內建 macOS arm64、macOS Intel 與 Windows x64 的 Node.js Runtime，使用者不需要另外安裝 Node.js。電腦仍需要至少一個宿主：Claude Code 2.1.265 以上或 Codex CLI 0.148.0 以上。安裝器會自動偵測、安裝到所有可用宿主，並在未登入時啟動官方瀏覽器登入流程。
 
 ## 同一個檔案自動更新
 
@@ -32,6 +32,7 @@
 - 保存 `agent.json`、`AGENT.md`、`MEMORY.md`、Skills 與版本歷程。
 - 每位員工可建立多個 Workflows，寫入 `workflows/<workflow-id>/`，並以 Skill、Tool、Manual、Approval 節點呈現。
 - VIXO Agents Dashboard 即時顯示員工、Skills 與 Workflow 節點，提供 Play、執行紀錄與每日排程。
+- Play 可選擇「遇核准節點暫停」或「本次自動核准」；等待資料與等待核准會分開顯示，並可在 Dashboard 原 Session 續跑。
 - Play 與排程使用已登入的 Codex 或 Claude Code CLI，不另外調用模型 API。
 
 安裝完會自動開啟 Dashboard。之後可雙擊 `下載/Agent Teams/Open VIXO Agents.command` (macOS) 或 `Open VIXO Agents.cmd` (Windows)，也可在 Session 中說「開啟 VIXO Agents Dashboard」。
@@ -50,13 +51,13 @@
 
 登入時只會啟動宿主官方登入命令與瀏覽器頁面。Plugin 不會讀取、保存或傳送使用者的帳號密碼。
 
-Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。因此 v1.3.0 交付的是可獨立開啟、可由 Codex 內瀏覽器顯示的本機 Dashboard；沒有把 Dashi Taskboard 使用的非官方 CDP/DOM 注入包裝成正式 Plugin 功能。完整分層與後續 Desktop Bridge 邊界請看 [VIXO Agents 架構](docs/VIXO-AGENTS-ARCHITECTURE.md)。
+Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。v1.4.0 參考 Dashi Taskboard 的桌面 Bridge 做法，在可用的 Codex CDP Renderer 中加入 `VIXO Agents` 側欄頁面；若當前環境無法安全注入，會回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
 
 詳情請看 [安裝說明](README-安裝說明.md) 與 [測試報告](TEST-REPORT.md)。
 
 ## 驗證狀態
 
-- 23 個自動化測試通過。
+- 28 個自動化測試與 Codex 側欄實機穩定性檢查通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

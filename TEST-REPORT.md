@@ -1,23 +1,31 @@
-# VIXO Agent Teams Builder 1.3.0 測試報告
+# VIXO Agent Teams Builder 1.4.0 測試報告
 
-測試日期：2026-09-23（Asia/Taipei）
+測試日期：2026-09-24（Asia/Taipei）
 
-## v1.3.0 已通過
+## v1.4.0 已通過
 
-- 23 個自動化測試：原有安裝、登入、自動更新、MCP、Double Check、秘密掃描、多 Skill 與版本封存，加上 Workflow schema/參照檢查、`workflows/` 落盤、Dashboard Token 保護、Play 宿主路由與 08:00 排程。
+- 自動化測試包含安裝、登入、自動更新、MCP、Double Check、秘密掃描、多 Skill、Workflow 與 Dashboard。
+- Workflow 執行狀態可區分 `waiting-input`、`waiting-approval`、`completed`、`failed` 與 `rejected`。
+- 手動核准模式實測：到達 Approval 節點後暫停，Dashboard 呼叫 approve API，沿用原 Codex Session 完成後續節點。
+- 自動核准模式實測：Workflow 內建 Approval 不再暫停，但宿主工具權限仍保留。
+- Codex 側欄實機穩定性檢查：Dashi Taskboard 與 VIXO Agents 順序固定，1.5 秒內 0 次換位。
+- 發行包含 macOS arm64、macOS Intel、Windows x64 的 Node.js Runtime，macOS `.app` / `.command` 與 Windows `.exe` / `.cmd` / PowerShell 入口。
 - Codex Plugin validator：通過。
 - Claude Code `plugin validate --strict --json`：通過，0 errors、0 warnings。
-- macOS arm64 實機雙宿主安裝：Codex CLI 0.148.0 與 Claude Code 2.1.270 都已登入、安裝 v1.3.0 並通過 Runtime Doctor。
-- Dashboard 實機：成功啟動在 `127.0.0.1`，Token 授權後可讀取 Agent/Skill/Workflow，視覺檢查已確認員工卡、節點流、Play 與排程對話框。
-- Dashboard Play 真實 Codex E2E：由 HTTP Play 請求啟動已登入的 Codex，6 秒內 exit 0，執行記錄轉為 `completed`，日誌輸出 `VIXO_PLAY_OK`，未使用額外 API Key。
-- GitHub Actions `macos-latest` 與 `windows-latest`：兩邊均完成 23 個測試、manifest 驗證、真實宿主 CLI 安裝及一鍵安裝器；Windows 額外通過跨磁碟與含空白路徑安裝。通過紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35765604515>。
 
-## v1.3.0 已知邊界
+## v1.4.0 已知邊界
 
-- Codex 正式 Plugin manifest 沒有自訂左側頁面欄位。本版不將 Dashi Taskboard 的非官方 CDP/DOM 注入包裝成穩定功能；交付為本機 Dashboard、宿主工具與 macOS/Windows 開啟檔。
+- Codex 正式 Plugin manifest 仍沒有自訂左側頁面欄位；本版側欄是桌面 CDP/DOM Bridge，不是官方側欄 API，並有原生瀏覽器面板回退。
 - 排程由 Dashboard 背景服務觸發；電腦關機或服務停止時不會補跑。
-- Approval 節點不會自動批准；執行完成後標記 `waiting-approval`，必須回到對話中取得明確確認。
+- 自動核准是「單次執行」或「單筆排程」設定，不會改變 Agent 永久安全規則，也不繞過 Codex／Claude Code 的工具權限。
+- 舊版已結束且沒有記錄 Session ID 的 `waiting-approval` 紀錄無法原地續跑，需從新版 Play 重新啟動。
 - Play 會載入使用者現有 Codex/Claude Code 設定與工具；其他外掛的登入錯誤可能出現在 run log，但本次真實 Play 仍完成。
+- macOS App 與 Windows EXE 未簽章；Gatekeeper 或 SmartScreen 可能顯示安全確認。
+
+## v1.3.0 歷史驗證
+
+- 23 個自動化測試、雙宿主實機安裝、Dashboard Play 真實 Codex E2E 與 macOS/Windows GitHub Actions 均通過。
+- GitHub Actions 紀錄：<https://github.com/inventra/agent-teams-builder/actions/runs/35765604515>。
 
 ## v1.2.0 歷史驗證
 

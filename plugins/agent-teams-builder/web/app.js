@@ -1,5 +1,7 @@
-const token = new URLSearchParams(location.search).get("token") || sessionStorage.getItem("vixo-token") || "";
-if (token) sessionStorage.setItem("vixo-token", token);
+let storedToken = "";
+try { storedToken = sessionStorage.getItem("vixo-token") || ""; } catch {}
+const token = globalThis.__VIXO_AGENTS_EMBED_TOKEN__ || new URLSearchParams(location.search).get("token") || storedToken;
+try { if (token) sessionStorage.setItem("vixo-token", token); } catch {}
 const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 let state = null;
 let selected = "all";
@@ -31,19 +33,28 @@ function employeeCard(agent) {
 
 function renderRuns() {
   if (!state.runs.length) return "";
-  return `<section class="runs"><div class="eyebrow">RECENT RUNS</div><div class="employee"><div class="employee-body">${state.runs.slice(0,8).map(run=>`<div class="run"><div><strong>${esc(run.agentName||run.agentId)} · ${esc(run.workflowName||run.workflowId)}</strong><p>${esc(run.host)} · ${esc(new Date(run.startedAt).toLocaleString())}</p></div><span class="status ${esc(run.status)}">${esc(run.status)}</span></div>`).join("")}</div></div></section>`;
+  const labels={"running":"執行中","waiting-input":"等待輸入","waiting-approval":"等待核准","completed":"已完成","failed":"失敗","rejected":"已拒絕"};
+  return `<section class="runs"><div class="eyebrow">RECENT RUNS</div><div class="employee"><div class="employee-body">${state.runs.slice(0,8).map(run=>{
+    const detail=run.lastMessage?`<p class="run-message">${esc(run.lastMessage)}</p>`:"";
+    let controls="";
+    if(run.status==="waiting-input") controls=run.resumable?`<button class="secondary reply-run" data-run="${esc(run.id)}">回覆並繼續</button>`:`<span class="legacy-note">舊版紀錄無法續跑，請重新 Play</span>`;
+    if(run.status==="waiting-approval") controls=run.resumable?`<button class="secondary reject-run" data-run="${esc(run.id)}">拒絕</button><button class="primary approve-run" data-run="${esc(run.id)}">核准並繼續</button>`:`<span class="legacy-note">舊版紀錄無法續跑，請重新 Play</span>`;
+    return `<div class="run"><div><strong>${esc(run.agentName||run.agentId)} · ${esc(run.workflowName||run.workflowId)}</strong><p>${esc(run.host)} · ${esc(new Date(run.startedAt).toLocaleString())}${run.approvalMode==="auto"?" · 本次自動核准":""}</p>${run.pendingNodeName?`<p>待核准：${esc(run.pendingNodeName)}</p>`:""}${detail}</div><div class="run-side"><span class="status ${esc(run.status)}">${esc(labels[run.status]||run.status)}</span><div class="run-actions">${controls}</div></div></div>`;
+  }).join("")}</div></div></section>`;
 }
 
 function bindActions() {
-  document.querySelectorAll(".play").forEach(button=>button.onclick=async()=>{
-    const task=prompt("這次要交給員工的任務：","執行這個 Workflow"); if(task===null)return;
-    button.disabled=true;
-    try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify({agent:button.dataset.agent,workflow:button.dataset.workflow,task})});toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}finally{button.disabled=false;}
+  document.querySelectorAll(".play").forEach(button=>button.onclick=()=>{
+    const form=document.querySelector("#run-form");form.elements.agent.value=button.dataset.agent;form.elements.workflow.value=button.dataset.workflow;
+    form.elements.host.value=state.hosts.codex?"codex":"claude";document.querySelector("#run-dialog").showModal();
   });
   document.querySelectorAll(".schedule").forEach(button=>button.onclick=()=>{
     const form=document.querySelector("#schedule-form");form.elements.agentId.value=button.dataset.agent;form.elements.workflowId.value=button.dataset.workflow;
     form.elements.host.value=state.hosts.codex?"codex":"claude";document.querySelector("#schedule-dialog").showModal();
   });
+  document.querySelectorAll(".reply-run").forEach(button=>button.onclick=async()=>{const message=prompt("回覆 Agent 需要的資料：");if(!message)return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/reply`,{method:"POST",body:JSON.stringify({message})});toast("已回覆，Workflow 繼續執行");await load();}catch(error){toast(error.message);}});
+  document.querySelectorAll(".approve-run").forEach(button=>button.onclick=async()=>{const message=prompt("核准說明：","我確認核准這個節點，請繼續執行。");if(!message)return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/approve`,{method:"POST",body:JSON.stringify({message})});toast("已核准，Workflow 繼續執行");await load();}catch(error){toast(error.message);}});
+  document.querySelectorAll(".reject-run").forEach(button=>button.onclick=async()=>{if(!confirm("確定拒絕並停止這次 Workflow？"))return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/reject`,{method:"POST",body:JSON.stringify({message:"使用者在 Dashboard 拒絕核准"})});toast("已拒絕這次執行");await load();}catch(error){toast(error.message);}});
 }
 
 function render() {
@@ -60,5 +71,8 @@ function render() {
 
 async function load(){try{state=await api("/api/state");render();}catch(error){document.querySelector("#content").innerHTML=`<div class="empty"><h2>無法載入</h2><p>${esc(error.message)}</p></div>`;}}
 document.querySelector("#refresh").onclick=load;
+document.querySelector("#run-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#run-dialog").close();toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}});
 document.querySelector("#schedule-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{await api("/api/schedules",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#schedule-dialog").close();toast("排程已儲存");await load();}catch(error){toast(error.message);}});
-await load();setInterval(load,5000);
+await load();
+try { window.parent.postMessage({ type: "vixo-agents:ready" }, "*"); } catch {}
+setInterval(load,5000);

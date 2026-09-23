@@ -77,6 +77,11 @@ test("installer configures every detected compatible CLI", () => {
     assert.match(calls, /plugin add agent-teams-builder@agent-teams-local/);
     assert.match(calls, /plugin install agent-teams-builder@agent-teams-local/);
     assert.ok(fs.existsSync(report.pluginRoot));
+    const macLauncher = fs.readFileSync(report.dashboardLaunchers.mac, "utf8");
+    const windowsLauncher = fs.readFileSync(report.dashboardLaunchers.windows, "utf8");
+    assert.match(macLauncher, /vixo-codex-embed\.mjs/);
+    assert.match(windowsLauncher, /vixo-codex-embed\.mjs/);
+    assert.ok(fs.existsSync(path.join(report.pluginRoot, "inject", "vixo-agents.user.js")));
     assert.equal(report.authentication.codex.loggedIn, true);
     assert.equal(report.authentication.claude.loggedIn, true);
     assert.doesNotMatch(calls, /codex login\n/);

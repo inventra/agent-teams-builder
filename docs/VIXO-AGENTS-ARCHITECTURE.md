@@ -45,13 +45,13 @@ Downloads/Agent Teams/
 - Workflow 視覺化：依序呈現 Skill、Tool、Manual 與 Approval 節點。
 - Play：使用安裝時已登入的 Codex 或 Claude Code CLI，不需要額外的 Anthropic/OpenAI API Key。
 - 排程：以本機時區儲存每日 HH:MM，由 Dashboard 背景服務觸發。Dashboard 服務未執行時，排程不會補跑。
-- 審核停點：含 Approval 節點的執行完成前會標記 `waiting-approval`，不會把人工決策假裝成自動化。
+- 審核停點：手動模式下，到達 Approval 節點會標記 `waiting-approval`，使用者可在 Dashboard 核准或拒絕；缺少條件時另標記 `waiting-input`。單次自動核准不會繞過宿主工具權限。
 
 ## Codex 左側頁面的技術邊界
 
 Codex 的正式 Plugin manifest 目前可宣告 Skills、MCP tools、Apps connector 與展示資訊，但沒有「自訂左側頁面」的正式欄位。Dashi Taskboard 使用的方式是本機服務加上 CDP 畫面注入，並非 Codex Plugin API。
 
-本版先把可長期維護的 Dashboard、檔案模型、Play 與排程完成，並提供 macOS/Windows 開啟檔與 `dashboard_open` 工具。固定左側按鈕如果要上線，應獨立為「實驗性 Codex Desktop Bridge」，逐版測試 Codex DOM/CDP 相容性，不影響 Agent 核心資料。
+v1.4.0 已將固定左側按鈕實作為「Codex Desktop Bridge」，使用 loopback CDP、document-start 注入與 sandbox iframe，並在無法注入時回退到 Codex 原生瀏覽器面板。此 Bridge 與 Agent 核心資料分離，並有 Taskboard 共存順序測試。
 
 ## 安全邊界
 

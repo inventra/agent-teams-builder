@@ -50,6 +50,9 @@ function send(response, status, value, headers = {}) {
     "content-type": typeof value === "string" ? "text/plain; charset=utf-8" : "application/json; charset=utf-8",
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
+    "access-control-allow-origin": "null",
+    "access-control-allow-headers": "authorization, content-type",
+    "access-control-allow-methods": "GET, POST, DELETE, OPTIONS",
     ...headers
   });
   response.end(payload);
@@ -77,13 +80,142 @@ function chooseHost(requested) {
 
 function runFile(id) { return path.join(runsRoot(), `${id}.json`); }
 
-export function startWorkflowRun({ agent, workflow, task, host }) {
-  const prepared = prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow" });
+const RUN_STATE_MARKER = /VIXO_RUN_STATE:\s*(COMPLETED|WAITING_INPUT|WAITING_APPROVAL)(?:\s*:\s*([a-z0-9-]+))?/i;
+
+function cleanLastMessage(value) {
+  return String(value || "").replace(RUN_STATE_MARKER, "").trim().slice(-12_000);
+}
+
+export function classifyRunOutcome({ exitCode, lastMessage, approvalMode = "manual", remainingApprovals = 0 }) {
+  if (exitCode !== 0) return { status: "failed", pendingNodeId: null };
+  const text = String(lastMessage || "").trim();
+  const marker = text.match(RUN_STATE_MARKER);
+  if (marker?.[1]?.toUpperCase() === "WAITING_INPUT") return { status: "waiting-input", pendingNodeId: null };
+  if (marker?.[1]?.toUpperCase() === "WAITING_APPROVAL") {
+    return approvalMode === "auto"
+      ? { status: "waiting-input", pendingNodeId: marker[2] || null }
+      : { status: "waiting-approval", pendingNodeId: marker[2] || null };
+  }
+  if (marker?.[1]?.toUpperCase() === "COMPLETED") return { status: "completed", pendingNodeId: null };
+  if (/(?:請問|請提供|請指定|需要您提供|[?？])\s*$/u.test(text)) {
+    return { status: "waiting-input", pendingNodeId: null };
+  }
+  if (approvalMode === "manual" && remainingApprovals > 0 && /(?:請|是否).{0,30}(?:確認|核准|同意|同步)/u.test(text)) {
+    return { status: "waiting-approval", pendingNodeId: null };
+  }
+  return { status: "completed", pendingNodeId: null };
+}
+
+function executionProtocol(approvalMode) {
+  return [
+    "",
+    "VIXO Dashboard 執行狀態協定：",
+    "- 需要使用者補充查詢條件、帳號選擇或其他資料時，停下並在最後一行輸出 VIXO_RUN_STATE: WAITING_INPUT。",
+    approvalMode === "auto"
+      ? "- 本次已自動核准 Workflow 內建的 approval 節點，不要因這些節點停下；但仍須遵守宿主工具的權限與安全規則。"
+      : "- 到達 Workflow approval 節點時，停下並在最後一行輸出 VIXO_RUN_STATE: WAITING_APPROVAL:<node-id>。",
+    "- 所有節點完成時，在最後一行輸出 VIXO_RUN_STATE: COMPLETED。",
+    "- 狀態行前先用繁體中文回報已完成範圍、等待的資料或核准內容。"
+  ].join("\n");
+}
+
+function parseCodexEvent(line, record) {
+  try {
+    const event = JSON.parse(line);
+    const sessionId = event.thread_id || event.threadId || event.session_id || event.sessionId;
+    if (typeof sessionId === "string" && sessionId) record.sessionId = sessionId;
+  } catch {}
+}
+
+function spawnWorkflowTurn(record, prompt, { resume = false } = {}) {
+  const output = fs.openSync(record.logFile, "a", 0o600);
+  const command = process.platform === "win32" ? `${record.host}.cmd` : record.host;
+  const lastMessageFile = path.join(runsRoot(), `${record.id}.last.txt`);
+  record.lastMessageFile = lastMessageFile;
+  const args = record.host === "codex"
+    ? resume
+      ? ["exec", "resume", "--json", "--skip-git-repo-check", "-o", lastMessageFile, record.sessionId, "-"]
+      : ["exec", "--skip-git-repo-check", "-C", record.agentDirectory, "--sandbox", "workspace-write", "--json", "-o", lastMessageFile, "-"]
+    : resume
+      ? ["-p", "--resume", record.sessionId, "--permission-mode", "dontAsk", "--output-format", "json"]
+      : ["-p", "--session-id", record.sessionId, "--permission-mode", "dontAsk", "--output-format", "json"];
+  const throughCmd = process.platform === "win32";
+  const executable = throughCmd ? (process.env.ComSpec || "cmd.exe") : command;
+  const commandArgs = throughCmd ? ["/d", "/s", "/c", command, ...args] : args;
+  const child = spawn(executable, commandArgs, {
+    cwd: record.agentDirectory,
+    detached: false,
+    windowsHide: true,
+    shell: false,
+    stdio: ["pipe", "pipe", "pipe"]
+  });
+  let stdoutText = "";
+  let codexBuffer = "";
+  let finalized = false;
+  const append = (chunk) => {
+    try { fs.writeSync(output, chunk); } catch {}
+  };
+  child.stdout.on("data", (chunk) => {
+    append(chunk);
+    stdoutText = `${stdoutText}${chunk}`.slice(-4_000_000);
+    if (record.host === "codex") {
+      codexBuffer += chunk.toString("utf8");
+      const lines = codexBuffer.split(/\r?\n/);
+      codexBuffer = lines.pop() || "";
+      lines.forEach((line) => parseCodexEvent(line, record));
+    }
+  });
+  child.stderr.on("data", append);
+  child.stdin.end(prompt);
+  const finalize = (code, error = null) => {
+    if (finalized) return;
+    finalized = true;
+    if (codexBuffer) parseCodexEvent(codexBuffer, record);
+    try { fs.closeSync(output); } catch {}
+    let lastMessage = "";
+    if (record.host === "codex") {
+      try { lastMessage = fs.readFileSync(lastMessageFile, "utf8"); } catch {}
+    } else {
+      try {
+        const parsed = JSON.parse(stdoutText);
+        lastMessage = parsed.result || parsed.message || "";
+        record.sessionId = parsed.session_id || parsed.sessionId || record.sessionId;
+      } catch { lastMessage = stdoutText; }
+    }
+    const remainingApprovals = Math.max(0, record.approvalNodes.length - record.approvalIndex);
+    const outcome = error
+      ? { status: "failed", pendingNodeId: null }
+      : classifyRunOutcome({ exitCode: code, lastMessage, approvalMode: record.approvalMode, remainingApprovals });
+    const current = readJson(runFile(record.id), record);
+    const pendingNode = outcome.pendingNodeId
+      ? record.approvalNodes.find((node) => node.id === outcome.pendingNodeId)
+      : record.approvalNodes[record.approvalIndex] || null;
+    writeJson(runFile(record.id), {
+      ...current,
+      sessionId: record.sessionId || current.sessionId || null,
+      status: outcome.status,
+      pendingNodeId: outcome.status === "waiting-approval" ? pendingNode?.id || null : null,
+      pendingNodeName: outcome.status === "waiting-approval" ? pendingNode?.name || null : null,
+      lastMessage: cleanLastMessage(lastMessage),
+      finishedAt: new Date().toISOString(),
+      exitCode: code,
+      error: error?.message || null
+    });
+  };
+  child.on("error", (error) => finalize(null, error));
+  child.on("close", (code) => finalize(code));
+}
+
+export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "manual" }) {
+  const prepared = prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
   const selectedHost = chooseHost(host);
   const id = crypto.randomUUID();
   const agentDirectory = path.join(agentTeamsRoot(), prepared.agent.id);
   const logFile = path.join(runsRoot(), `${id}.log`);
   fs.mkdirSync(runsRoot(), { recursive: true });
+  const approvalNodes = prepared.workflow.nodes
+    .filter((node) => node.requiresApproval)
+    .map((node) => ({ id: node.id, name: node.name }));
   const record = {
     id,
     agentId: prepared.agent.id,
@@ -93,43 +225,61 @@ export function startWorkflowRun({ agent, workflow, task, host }) {
     host: selectedHost,
     task: prepared.task,
     status: "running",
-    approvalExpected: prepared.execution.requiresApprovalNodes,
+    approvalMode,
+    approvalExpected: approvalNodes.length > 0,
+    approvalNodes,
+    approvalIndex: approvalMode === "auto" ? approvalNodes.length : 0,
+    pendingNodeId: null,
+    pendingNodeName: null,
+    sessionId: selectedHost === "claude" ? crypto.randomUUID() : null,
+    agentDirectory,
     startedAt: new Date().toISOString(),
     finishedAt: null,
     exitCode: null,
     logFile
   };
   writeJson(runFile(id), record);
-  const output = fs.openSync(logFile, "a", 0o600);
-  const command = process.platform === "win32" ? `${selectedHost}.cmd` : selectedHost;
-  const args = selectedHost === "codex"
-    ? ["exec", "--skip-git-repo-check", "-C", agentDirectory, "--sandbox", "workspace-write", "-"]
-    : ["-p", "--permission-mode", "dontAsk", "--output-format", "text"];
-  const throughCmd = process.platform === "win32";
-  const executable = throughCmd ? (process.env.ComSpec || "cmd.exe") : command;
-  const commandArgs = throughCmd ? ["/d", "/s", "/c", command, ...args] : args;
-  const child = spawn(executable, commandArgs, {
-    cwd: agentDirectory,
-    detached: false,
-    windowsHide: true,
-    shell: false,
-    stdio: ["pipe", output, output]
-  });
-  child.stdin.end(prepared.prompt);
-  child.on("error", (error) => {
-    fs.closeSync(output);
-    writeJson(runFile(id), { ...record, status: "failed", finishedAt: new Date().toISOString(), error: error.message });
-  });
-  child.on("close", (code) => {
-    try { fs.closeSync(output); } catch {}
-    writeJson(runFile(id), {
-      ...record,
-      status: code === 0 ? (record.approvalExpected ? "waiting-approval" : "completed") : "failed",
-      finishedAt: new Date().toISOString(),
-      exitCode: code
-    });
-  });
+  spawnWorkflowTurn(record, `${prepared.prompt}${executionProtocol(approvalMode)}`);
   return record;
+}
+
+function resumeWorkflowRun(id, { action, message }) {
+  const file = runFile(id);
+  const record = readJson(file, null);
+  if (!record) throw new Error("Run not found");
+  const expected = action === "approve" ? "waiting-approval" : "waiting-input";
+  if (record.status !== expected) throw new Error(`Run is ${record.status}, not ${expected}`);
+  if (!record.sessionId) throw new Error("這是舊版本建立的執行紀錄，無法續跑。請用新版 Play 重新執行。");
+  const input = String(message || "").trim();
+  if (!input) throw new Error(action === "approve" ? "請提供核准說明" : "請輸入要回覆 Agent 的內容");
+  if (action === "approve") record.approvalIndex = Math.min(record.approvalNodes.length, record.approvalIndex + 1);
+  record.status = "running";
+  record.pendingNodeId = null;
+  record.pendingNodeName = null;
+  record.lastMessage = null;
+  record.finishedAt = null;
+  record.resumedAt = new Date().toISOString();
+  writeJson(file, record);
+  const continuation = action === "approve"
+    ? `使用者已明確核准目前的 Workflow 節點並回覆：${input}\n請從目前停下的節點後繼續，不要重做已完成的節點。`
+    : `使用者回覆：${input}\n請使用這份資料從目前停下處繼續，不要重做已完成的節點。`;
+  spawnWorkflowTurn(record, `${continuation}${executionProtocol(record.approvalMode)}`, { resume: true });
+  return record;
+}
+
+function rejectWorkflowRun(id, message = "使用者拒絕這個核准節點") {
+  const file = runFile(id);
+  const record = readJson(file, null);
+  if (!record) throw new Error("Run not found");
+  if (!["waiting-approval", "waiting-input"].includes(record.status)) throw new Error(`Run is ${record.status} and cannot be rejected`);
+  const next = { ...record, status: "rejected", rejectionReason: String(message).trim(), finishedAt: new Date().toISOString() };
+  writeJson(file, next);
+  return next;
+}
+
+function publicRun(record) {
+  const { logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, sessionId, ...safe } = record;
+  return { ...safe, resumable: Boolean(sessionId) };
 }
 
 function recentRuns() {
@@ -139,7 +289,8 @@ function recentRuns() {
     .map((name) => readJson(path.join(runsRoot(), name), null))
     .filter(Boolean)
     .sort((left, right) => String(right.startedAt).localeCompare(String(left.startedAt)))
-    .slice(0, 30);
+    .slice(0, 30)
+    .map(publicRun);
 }
 
 function dashboardState() {
@@ -168,6 +319,7 @@ function upsertSchedule(input) {
     workflowName: prepared.workflow.name,
     task: prepared.task,
     host,
+    approvalMode: input.approvalMode === "auto" ? "auto" : "manual",
     time: input.time,
     enabled: input.enabled !== false,
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || "local",
@@ -197,7 +349,15 @@ function processSchedules(now = new Date()) {
     schedule.lastRunDate = date;
     schedule.updatedAt = new Date().toISOString();
     changed = true;
-    try { startWorkflowRun({ agent: schedule.agentId, workflow: schedule.workflowId, task: schedule.task, host: schedule.host }); }
+    try {
+      startWorkflowRun({
+        agent: schedule.agentId,
+        workflow: schedule.workflowId,
+        task: schedule.task,
+        host: schedule.host,
+        approvalMode: schedule.approvalMode || "manual"
+      });
+    }
     catch (error) {
       const id = crypto.randomUUID();
       writeJson(runFile(id), {
@@ -230,10 +390,19 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
     server: http.createServer(async (request, response) => {
       try {
         const url = new URL(request.url || "/", "http://127.0.0.1");
+        if (request.method === "OPTIONS") return send(response, 204, "");
         if (url.pathname === "/health") return send(response, 200, { status: "ok", product: "vixo-agents", pid: process.pid });
         if (url.pathname.startsWith("/api/") && !authOkay(request, token)) return send(response, 401, { error: "Unauthorized" });
         if (request.method === "GET" && url.pathname === "/api/state") return send(response, 200, dashboardState());
-        if (request.method === "POST" && url.pathname === "/api/runs") return send(response, 202, startWorkflowRun(await bodyJson(request)));
+        if (request.method === "POST" && url.pathname === "/api/runs") return send(response, 202, publicRun(startWorkflowRun(await bodyJson(request))));
+        const runAction = url.pathname.match(/^\/api\/runs\/([^/]+)\/(approve|reply|reject)$/);
+        if (request.method === "POST" && runAction) {
+          const id = decodeURIComponent(runAction[1]);
+          const action = runAction[2];
+          const body = await bodyJson(request);
+          if (action === "reject") return send(response, 200, publicRun(rejectWorkflowRun(id, body.message)));
+          return send(response, 202, publicRun(resumeWorkflowRun(id, { action, message: body.message })));
+        }
         if (request.method === "POST" && url.pathname === "/api/schedules") return send(response, 200, upsertSchedule(await bodyJson(request)));
         if (request.method === "DELETE" && url.pathname.startsWith("/api/schedules/")) {
           deleteSchedule(decodeURIComponent(url.pathname.slice("/api/schedules/".length)));
@@ -242,7 +411,12 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         const relative = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
         const file = path.resolve(webRoot, relative);
         if (!file.startsWith(`${webRoot}${path.sep}`) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return send(response, 404, "Not found");
-        response.writeHead(200, { "content-type": contentType(file), "cache-control": "no-store", "x-content-type-options": "nosniff" });
+        response.writeHead(200, {
+          "content-type": contentType(file),
+          "cache-control": "no-store",
+          "x-content-type-options": "nosniff",
+          "access-control-allow-origin": "null"
+        });
         fs.createReadStream(file).pipe(response);
       } catch (error) {
         send(response, 400, { error: error instanceof Error ? error.message : String(error) });

@@ -18,6 +18,10 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/agent-teams-builder/package-lock.json
+      - uses: actions/setup-go@v6
+        if: runner.os == 'Windows'
+        with:
+          go-version: stable
       - name: Install plugin runtime dependencies
         run: npm ci --prefix plugins/agent-teams-builder --no-audit --no-fund
       - name: Run automated tests
@@ -33,6 +37,7 @@ jobs:
           export AGENT_TEAMS_INSTALL_ROOT="$RUNNER_TEMP/Agent Teams"
           export AGENT_TEAMS_SKIP_LOGIN="1"
           export AGENT_TEAMS_SKIP_UPDATE="1"
+          export AGENT_TEAMS_SKIP_EMBED="1"
           ./install.command
           codex plugin list | grep 'agent-teams-builder@agent-teams-local'
           claude plugin list | grep 'agent-teams-builder@agent-teams-local'
@@ -46,6 +51,15 @@ jobs:
           $env:AGENT_TEAMS_INSTALL_ROOT = Join-Path $env:RUNNER_TEMP "Agent Teams"
           $env:AGENT_TEAMS_SKIP_LOGIN = "1"
           $env:AGENT_TEAMS_SKIP_UPDATE = "1"
+          $env:AGENT_TEAMS_SKIP_EMBED = "1"
+          $env:VIXO_INSTALL_NONINTERACTIVE = "1"
+          $nodeDirectory = Split-Path (Get-Command node).Source
+          New-Item -ItemType Directory -Force .\runtime\windows-x64\node_modules | Out-Null
+          Copy-Item (Join-Path $nodeDirectory "node.exe") .\runtime\windows-x64\node.exe
+          Copy-Item (Join-Path $nodeDirectory "node_modules\npm") .\runtime\windows-x64\node_modules\npm -Recurse
+          go build -trimpath -ldflags "-s -w" -o .\Install-Agent-Builder.test.exe .\launchers\windows-installer\main.go
+          & .\Install-Agent-Builder.test.exe
+          if ($LASTEXITCODE -ne 0) { throw "Windows EXE installer failed with exit code $LASTEXITCODE" }
           powershell -ExecutionPolicy Bypass -File .\Install-Agent-Builder.ps1
           codex plugin list | Select-String 'agent-teams-builder@agent-teams-local'
           claude plugin list | Select-String 'agent-teams-builder@agent-teams-local'

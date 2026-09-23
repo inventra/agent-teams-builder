@@ -452,20 +452,24 @@ export function prepareRun({ agent: reference, task, skill: requestedSkill }) {
   };
 }
 
-export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkflow, task = "執行這個 Workflow" }) {
+export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkflow, task = "執行這個 Workflow", approvalMode = "manual" }) {
   const agent = getAgent(reference);
   const needle = cleanString(requestedWorkflow, "workflow", 120).toLocaleLowerCase("zh-TW");
   const workflow = (agent.workflows || []).find((item) => [item.id, item.name].some((value) => value.toLocaleLowerCase("zh-TW") === needle));
   assert(workflow, `Workflow not found: ${requestedWorkflow}`);
   const skillById = new Map(agent.skills.map((skill) => [skill.id, skill]));
   const cleanTask = cleanString(task, "task", 8000);
+  assert(["manual", "auto"].includes(approvalMode), "approvalMode must be manual or auto");
+  const approvalInstruction = approvalMode === "auto"
+    ? "使用者在 Dashboard 啟動本次執行時，已明確核准這個 Workflow 中所有 approval 或 requiresApproval 節點；不要在這些 Workflow 節點停下。這不會繞過 Codex／Claude Code 本身的工具權限與安全規則。"
+    : "請依序執行節點；遇到 approval 或 requiresApproval 節點必須停下來取得使用者明確確認。";
   const prompt = [
     agent.systemPrompt,
     "",
     `你現在以 ${agent.displayName} 身分執行 Workflow：${workflow.name}。`,
     `使用者任務：${cleanTask}`,
     "",
-    "請依序執行節點；遇到 approval 或 requiresApproval 節點必須停下來取得使用者明確確認：",
+    approvalInstruction,
     ...workflow.nodes.flatMap((node, index) => {
       const skill = node.skillId ? skillById.get(node.skillId) : null;
       return [
@@ -487,6 +491,7 @@ export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkfl
       mode: "host-cli",
       supportedHosts: ["codex", "claude-code"],
       requiresApprovalNodes: workflow.nodes.some((node) => node.requiresApproval),
+      approvalMode,
       instruction: "Run with the installed and signed-in Codex or Claude Code CLI. No separate Anthropic/OpenAI API key is used."
     },
     prompt
