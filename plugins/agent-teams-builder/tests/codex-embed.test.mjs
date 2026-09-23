@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildInjectionSource,
   isCodexRendererTarget,
@@ -32,4 +35,13 @@ test("dashboard embedding accepts loopback only and quotes injected values", () 
   assert.match(source, /window\.test = true/);
   assert.match(source, /sourceURL=vixo-agents\.user\.js/);
   assert.throws(() => buildInjectionSource("https://example.com", "", "hash"), /loopback/);
+});
+
+test("native Play creates a project-scoped Codex task and verifies its assignment", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "inject", "vixo-agents.user.js"), "utf8");
+  assert.match(source, /project:\s*\{\s*type:\s*"local",\s*projectId\s*\}/);
+  assert.match(source, /thread-project-assignments/);
+  assert.match(source, /nativeThreadProjectId\(threadId\) === projectId/);
+  assert.match(source, /createNativeThread/);
 });

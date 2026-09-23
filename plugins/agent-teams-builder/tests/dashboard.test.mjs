@@ -3,12 +3,23 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { classifyRunOutcome, createDashboardServer } from "../src/dashboard-server.mjs";
+import { classifyRunOutcome, createDashboardServer, listCodexProjects } from "../src/dashboard-server.mjs";
 import { commitPreview, createPreview } from "../src/store.mjs";
 
 test("dashboard is loopback-only, token protected, and exposes Agent workflows", async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "vixo-dashboard-test-"));
   process.env.AGENT_TEAMS_HOME = temporary;
+  const oldCodexHome = process.env.CODEX_HOME;
+  const codexHome = path.join(temporary, "codex-home");
+  const projectRoot = path.join(temporary, "sample-project");
+  fs.mkdirSync(path.join(projectRoot, ".git"), { recursive: true });
+  fs.mkdirSync(codexHome, { recursive: true });
+  process.env.CODEX_HOME = codexHome;
+  fs.writeFileSync(path.join(codexHome, ".codex-global-state.json"), `${JSON.stringify({
+    "local-projects": { "project-1": { id: "project-1", name: "範例專案", rootPaths: [projectRoot] } },
+    "project-order": ["project-1"],
+    "selected-project": { type: "local", projectId: "project-1" }
+  })}\n`);
   const preview = createPreview({ action: "create", spec: {
     id: "finance-helper", displayName: "財務小幫手", aliases: [], description: "處理財務整理", purpose: "整理財務資料", systemPrompt: "不得自行付款。", memory: "空",
     skills: [{ id: "reconcile", name: "對帳", description: "整理差異", triggers: ["對帳"], allowedTools: [], steps: ["讀取資料"], successCriteria: ["列出差異"] }],
@@ -65,6 +76,41 @@ process.stdin.on("end", () => {
     const state = await allowed.json();
     assert.equal(state.agents[0].workflows[0].id, "monthly-close");
     assert.equal(state.hosts.codex, true);
+    assert.deepEqual(state.codexProjects.map(({ id, name, selected, isGitRepository }) => ({ id, name, selected, isGitRepository })), [
+      { id: "project-1", name: "範例專案", selected: true, isGitRepository: true }
+    ]);
+    const nativeStarted = await fetch(`http://127.0.0.1:${port}/api/runs`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ agent: "finance-helper", workflow: "monthly-close", task: "建立原生任務", host: "codex", executionMode: "codex-app", projectId: "project-1" })
+    });
+    assert.equal(nativeStarted.status, 202);
+    const nativeRun = await nativeStarted.json();
+    assert.equal(nativeRun.status, "dispatching");
+    assert.equal(nativeRun.nativeLaunch.projectId, "project-1");
+    assert.match(nativeRun.nativeLaunch.instruction, /財務小幫手 · 月結/);
+    const nativeFinished = await fetch(`http://127.0.0.1:${port}/api/runs/${nativeRun.id}/native-result`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ threadId: "22222222-2222-4222-8222-222222222222" })
+    });
+    assert.equal(nativeFinished.status, 200);
+    const nativeResult = await nativeFinished.json();
+    assert.equal(nativeResult.status, "opened-in-codex");
+    assert.equal(nativeResult.threadId, "22222222-2222-4222-8222-222222222222");
+    const invalidNativeStarted = await fetch(`http://127.0.0.1:${port}/api/runs`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ agent: "finance-helper", workflow: "monthly-close", task: "驗證 Session ID", host: "codex", executionMode: "codex-app", projectId: "project-1" })
+    });
+    const invalidNativeRun = await invalidNativeStarted.json();
+    const invalidNativeFinished = await fetch(`http://127.0.0.1:${port}/api/runs/${invalidNativeRun.id}/native-result`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ threadId: "client-new-thread-invalid" })
+    });
+    assert.equal(invalidNativeFinished.status, 400);
+    assert.match((await invalidNativeFinished.json()).error, /threadId/);
     const started = await fetch(`http://127.0.0.1:${port}/api/runs`, {
       method: "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -139,7 +185,26 @@ process.stdin.on("end", () => {
     await new Promise((resolve) => server.close(resolve));
     fs.rmSync(temporary, { recursive: true, force: true });
     delete process.env.AGENT_TEAMS_HOME;
+    if (oldCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = oldCodexHome;
     process.env.PATH = oldPath;
+  }
+});
+
+test("Codex projects ignore missing roots and preserve selected project first", () => {
+  const existing = fs.mkdtempSync(path.join(os.tmpdir(), "vixo-project-list-"));
+  try {
+    const projects = listCodexProjects({
+      "local-projects": {
+        missing: { name: "不存在", rootPaths: [path.join(existing, "missing")] },
+        selected: { name: "目前專案", rootPaths: [existing] }
+      },
+      "project-order": ["missing", "selected"],
+      "selected-project": { projectId: "selected" }
+    });
+    assert.deepEqual(projects.map((item) => item.id), ["selected"]);
+  } finally {
+    fs.rmSync(existing, { recursive: true, force: true });
   }
 });
 

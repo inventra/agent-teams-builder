@@ -15,6 +15,7 @@ const runtimeFile = () => path.join(systemRoot(), "dashboard-runtime.json");
 const schedulesFile = () => path.join(systemRoot(), "schedules.json");
 const runsRoot = () => path.join(systemRoot(), "runs");
 const defaultPort = Number(process.env.VIXO_AGENTS_PORT || 47824);
+const codexStateFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), ".codex"), ".codex-global-state.json");
 
 function writeJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -76,6 +77,37 @@ function chooseHost(requested) {
   if (availableHost("codex")) return "codex";
   if (availableHost("claude")) return "claude";
   throw new Error("No installed and signed-in Codex or Claude Code host is available");
+}
+
+export function listCodexProjects(state = readJson(codexStateFile(), {})) {
+  const localProjects = state?.["local-projects"] && typeof state["local-projects"] === "object"
+    ? state["local-projects"]
+    : {};
+  const labels = state?.["electron-workspace-root-labels"] && typeof state["electron-workspace-root-labels"] === "object"
+    ? state["electron-workspace-root-labels"]
+    : {};
+  const order = Array.isArray(state?.["project-order"]) ? state["project-order"] : [];
+  const orderIndex = new Map(order.map((id, index) => [id, index]));
+  const selectedId = typeof state?.["selected-project"]?.projectId === "string"
+    ? state["selected-project"].projectId
+    : null;
+  return Object.entries(localProjects).flatMap(([id, project]) => {
+    const workspacePath = Array.isArray(project?.rootPaths)
+      ? project.rootPaths.find((root) => typeof root === "string" && path.isAbsolute(root) && fs.existsSync(root))
+      : null;
+    if (!id || !workspacePath) return [];
+    return [{
+      id,
+      name: String(project.name || labels[workspacePath] || path.basename(workspacePath)),
+      workspacePath,
+      selected: id === selectedId,
+      isGitRepository: fs.existsSync(path.join(workspacePath, ".git"))
+    }];
+  }).sort((left, right) => {
+    if (left.selected !== right.selected) return left.selected ? -1 : 1;
+    return (orderIndex.get(left.id) ?? Number.MAX_SAFE_INTEGER) - (orderIndex.get(right.id) ?? Number.MAX_SAFE_INTEGER)
+      || left.name.localeCompare(right.name, "zh-TW");
+  });
 }
 
 function runFile(id) { return path.join(runsRoot(), `${id}.json`); }
@@ -243,6 +275,87 @@ export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "
   return record;
 }
 
+export function prepareNativeCodexRun({ agent, workflow, task, approvalMode = "manual", projectId }) {
+  const prepared = prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
+  chooseHost("codex");
+  const project = listCodexProjects().find((item) => item.id === String(projectId || ""));
+  if (!project) throw new Error("請選擇目前 Codex 中可用的專案");
+  const id = crypto.randomUUID();
+  const approvalNodes = prepared.workflow.nodes
+    .filter((node) => node.requiresApproval)
+    .map((node) => ({ id: node.id, name: node.name }));
+  const record = {
+    id,
+    agentId: prepared.agent.id,
+    agentName: prepared.agent.displayName,
+    workflowId: prepared.workflow.id,
+    workflowName: prepared.workflow.name,
+    host: "codex",
+    task: prepared.task,
+    status: "dispatching",
+    executionMode: "codex-app",
+    approvalMode,
+    approvalExpected: approvalNodes.length > 0,
+    approvalNodes,
+    approvalIndex: approvalMode === "auto" ? approvalNodes.length : 0,
+    projectId: project.id,
+    projectName: project.name,
+    workspacePath: project.workspacePath,
+    sessionId: null,
+    startedAt: new Date().toISOString(),
+    finishedAt: null,
+    exitCode: null
+  };
+  fs.mkdirSync(runsRoot(), { recursive: true });
+  writeJson(runFile(id), record);
+  return {
+    record,
+    nativeLaunch: {
+      runId: id,
+      projectId: project.id,
+      projectName: project.name,
+      workspacePath: project.workspacePath,
+      title: `${prepared.agent.displayName} · ${prepared.workflow.name}`,
+      instruction: [
+        `VIXO Agents 任務：${prepared.agent.displayName} · ${prepared.workflow.name}`,
+        `執行專案：${project.name}`,
+        "",
+        prepared.prompt,
+        executionProtocol(approvalMode)
+      ].join("\n")
+    }
+  };
+}
+
+function finishNativeDispatch(id, { threadId, error }) {
+  const file = runFile(id);
+  const record = readJson(file, null);
+  if (!record) throw new Error("Run not found");
+  if (record.executionMode !== "codex-app" || record.status !== "dispatching") throw new Error("Run is not waiting for Codex App dispatch");
+  const normalizedThreadId = String(threadId || "").trim();
+  const normalizedError = String(error || "").trim();
+  if (!normalizedThreadId && !normalizedError) throw new Error("threadId or error is required");
+  if (normalizedThreadId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalizedThreadId)) {
+    throw new Error("Invalid Codex threadId");
+  }
+  const next = normalizedThreadId
+    ? {
+        ...record,
+        status: "opened-in-codex",
+        sessionId: normalizedThreadId,
+        dispatchedAt: new Date().toISOString(),
+        lastMessage: `已在 Codex 專案「${record.projectName}」建立新任務。執行內容與後續互動請在該任務中查看。`
+      }
+    : {
+        ...record,
+        status: "failed",
+        finishedAt: new Date().toISOString(),
+        error: normalizedError
+      };
+  writeJson(file, next);
+  return next;
+}
+
 function resumeWorkflowRun(id, { action, message }) {
   const file = runFile(id);
   const record = readJson(file, null);
@@ -278,8 +391,8 @@ function rejectWorkflowRun(id, message = "使用者拒絕這個核准節點") {
 }
 
 function publicRun(record) {
-  const { logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, sessionId, ...safe } = record;
-  return { ...safe, resumable: Boolean(sessionId) };
+  const { logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, workspacePath: _workspacePath, sessionId, ...safe } = record;
+  return { ...safe, threadId: record.executionMode === "codex-app" ? sessionId || null : null, resumable: Boolean(sessionId) };
 }
 
 function recentRuns() {
@@ -294,6 +407,7 @@ function recentRuns() {
 }
 
 function dashboardState() {
+  const codexProjects = availableHost("codex") ? listCodexProjects() : [];
   return {
     product: "VIXO Agents",
     root: ensureAgentTeamsRoot(),
@@ -301,6 +415,7 @@ function dashboardState() {
     schedules: readJson(schedulesFile(), []),
     runs: recentRuns(),
     hosts: { codex: availableHost("codex"), claude: availableHost("claude") },
+    codexProjects,
     refreshedAt: new Date().toISOString()
   };
 }
@@ -394,7 +509,18 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (url.pathname === "/health") return send(response, 200, { status: "ok", product: "vixo-agents", pid: process.pid });
         if (url.pathname.startsWith("/api/") && !authOkay(request, token)) return send(response, 401, { error: "Unauthorized" });
         if (request.method === "GET" && url.pathname === "/api/state") return send(response, 200, dashboardState());
-        if (request.method === "POST" && url.pathname === "/api/runs") return send(response, 202, publicRun(startWorkflowRun(await bodyJson(request))));
+        if (request.method === "POST" && url.pathname === "/api/runs") {
+          const body = await bodyJson(request);
+          if (body.host === "codex" && body.executionMode === "codex-app") {
+            const prepared = prepareNativeCodexRun(body);
+            return send(response, 202, { ...publicRun(prepared.record), nativeLaunch: prepared.nativeLaunch });
+          }
+          return send(response, 202, publicRun(startWorkflowRun(body)));
+        }
+        const nativeResult = url.pathname.match(/^\/api\/runs\/([^/]+)\/native-result$/);
+        if (request.method === "POST" && nativeResult) {
+          return send(response, 200, publicRun(finishNativeDispatch(decodeURIComponent(nativeResult[1]), await bodyJson(request))));
+        }
         const runAction = url.pathname.match(/^\/api\/runs\/([^/]+)\/(approve|reply|reject)$/);
         if (request.method === "POST" && runAction) {
           const id = decodeURIComponent(runAction[1]);

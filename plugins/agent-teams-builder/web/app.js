@@ -33,20 +33,21 @@ function employeeCard(agent) {
 
 function renderRuns() {
   if (!state.runs.length) return "";
-  const labels={"running":"執行中","waiting-input":"等待輸入","waiting-approval":"等待核准","completed":"已完成","failed":"失敗","rejected":"已拒絕"};
+  const labels={"dispatching":"正在建立 Codex 任務","opened-in-codex":"已建立 Codex 任務","running":"執行中","waiting-input":"等待輸入","waiting-approval":"等待核准","completed":"已完成","failed":"失敗","rejected":"已拒絕"};
   return `<section class="runs"><div class="eyebrow">RECENT RUNS</div><div class="employee"><div class="employee-body">${state.runs.slice(0,8).map(run=>{
     const detail=run.lastMessage?`<p class="run-message">${esc(run.lastMessage)}</p>`:"";
     let controls="";
     if(run.status==="waiting-input") controls=run.resumable?`<button class="secondary reply-run" data-run="${esc(run.id)}">回覆並繼續</button>`:`<span class="legacy-note">舊版紀錄無法續跑，請重新 Play</span>`;
     if(run.status==="waiting-approval") controls=run.resumable?`<button class="secondary reject-run" data-run="${esc(run.id)}">拒絕</button><button class="primary approve-run" data-run="${esc(run.id)}">核准並繼續</button>`:`<span class="legacy-note">舊版紀錄無法續跑，請重新 Play</span>`;
-    return `<div class="run"><div><strong>${esc(run.agentName||run.agentId)} · ${esc(run.workflowName||run.workflowId)}</strong><p>${esc(run.host)} · ${esc(new Date(run.startedAt).toLocaleString())}${run.approvalMode==="auto"?" · 本次自動核准":""}</p>${run.pendingNodeName?`<p>待核准：${esc(run.pendingNodeName)}</p>`:""}${detail}</div><div class="run-side"><span class="status ${esc(run.status)}">${esc(labels[run.status]||run.status)}</span><div class="run-actions">${controls}</div></div></div>`;
+    if(run.status==="opened-in-codex"&&run.threadId) controls=`<button class="primary open-native-thread" data-thread="${esc(run.threadId)}">在 Codex 開啟</button>`;
+    return `<div class="run"><div><strong>${esc(run.agentName||run.agentId)} · ${esc(run.workflowName||run.workflowId)}</strong><p>${esc(run.host)}${run.projectName?` · ${esc(run.projectName)}`:""} · ${esc(new Date(run.startedAt).toLocaleString())}${run.approvalMode==="auto"?" · 本次自動核准":""}</p>${run.pendingNodeName?`<p>待核准：${esc(run.pendingNodeName)}</p>`:""}${detail}</div><div class="run-side"><span class="status ${esc(run.status)}">${esc(labels[run.status]||run.status)}</span><div class="run-actions">${controls}</div></div></div>`;
   }).join("")}</div></div></section>`;
 }
 
 function bindActions() {
   document.querySelectorAll(".play").forEach(button=>button.onclick=()=>{
     const form=document.querySelector("#run-form");form.elements.agent.value=button.dataset.agent;form.elements.workflow.value=button.dataset.workflow;
-    form.elements.host.value=state.hosts.codex?"codex":"claude";document.querySelector("#run-dialog").showModal();
+    form.elements.host.value=state.hosts.codex?"codex":"claude";form.elements.host.onchange?.();document.querySelector("#run-dialog").showModal();
   });
   document.querySelectorAll(".schedule").forEach(button=>button.onclick=()=>{
     const form=document.querySelector("#schedule-form");form.elements.agentId.value=button.dataset.agent;form.elements.workflowId.value=button.dataset.workflow;
@@ -55,6 +56,25 @@ function bindActions() {
   document.querySelectorAll(".reply-run").forEach(button=>button.onclick=async()=>{const message=prompt("回覆 Agent 需要的資料：");if(!message)return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/reply`,{method:"POST",body:JSON.stringify({message})});toast("已回覆，Workflow 繼續執行");await load();}catch(error){toast(error.message);}});
   document.querySelectorAll(".approve-run").forEach(button=>button.onclick=async()=>{const message=prompt("核准說明：","我確認核准這個節點，請繼續執行。");if(!message)return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/approve`,{method:"POST",body:JSON.stringify({message})});toast("已核准，Workflow 繼續執行");await load();}catch(error){toast(error.message);}});
   document.querySelectorAll(".reject-run").forEach(button=>button.onclick=async()=>{if(!confirm("確定拒絕並停止這次 Workflow？"))return;try{await api(`/api/runs/${encodeURIComponent(button.dataset.run)}/reject`,{method:"POST",body:JSON.stringify({message:"使用者在 Dashboard 拒絕核准"})});toast("已拒絕這次執行");await load();}catch(error){toast(error.message);}});
+  document.querySelectorAll(".open-native-thread").forEach(button=>button.onclick=()=>window.parent.postMessage({type:"vixo-agents:open-codex-thread",threadId:button.dataset.thread},"*"));
+}
+
+function configureRunForm() {
+  const form=document.querySelector("#run-form"), host=form.elements.host, mode=form.elements.executionMode, project=form.elements.projectId;
+  const embedded=window.parent!==window;
+  const nativeOption=mode.querySelector('option[value="codex-app"]');
+  nativeOption.disabled=!embedded;
+  if(!embedded&&mode.value==="codex-app")mode.value="background";
+  project.innerHTML=(state.codexProjects||[]).map(item=>`<option value="${esc(item.id)}" ${item.selected?"selected":""}>${esc(item.name)} — ${esc(item.workspacePath)}</option>`).join("");
+  const refresh=()=>{
+    const codex=host.value==="codex", native=codex&&mode.value==="codex-app";
+    document.querySelector("#execution-mode-field").hidden=!codex;
+    document.querySelector("#codex-project-field").hidden=!native;
+    document.querySelector("#codex-project-note").hidden=!native;
+    project.required=native;
+    if(native&&!(state.codexProjects||[]).length){mode.value="background";refresh();toast("Codex 尚未設定可選專案，已改用背景執行");}
+  };
+  host.onchange=refresh;mode.onchange=refresh;refresh();
 }
 
 function render() {
@@ -66,13 +86,15 @@ function render() {
   document.querySelector("#page-subtitle").textContent=selectedAgent?selectedAgent.purpose:"把訓練結果、技能與執行流程放在同一個畫面。";
   document.querySelector("#content").innerHTML=agents.length?agents.map(employeeCard).join("")+renderRuns():'<div class="empty"><h2>還沒有員工</h2><p>在 Codex 或 Claude Code 完成一段流程後，說「幫我變成一個員工」。</p></div>';
   document.querySelector("#host-status").textContent=[state.hosts.codex&&"Codex",state.hosts.claude&&"Claude Code"].filter(Boolean).join(" + ")||"未連結宿主";
+  configureRunForm();
   bindActions();
 }
 
 async function load(){try{state=await api("/api/state");render();}catch(error){document.querySelector("#content").innerHTML=`<div class="empty"><h2>無法載入</h2><p>${esc(error.message)}</p></div>`;}}
 document.querySelector("#refresh").onclick=load;
-document.querySelector("#run-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#run-dialog").close();toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}});
+document.querySelector("#run-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#run-dialog").close();if(run.nativeLaunch){window.parent.postMessage({type:"vixo-agents:create-codex-thread",payload:run.nativeLaunch},"*");toast(`正在 ${run.nativeLaunch.projectName} 建立 Codex 任務`);}else toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}});
 document.querySelector("#schedule-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{await api("/api/schedules",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#schedule-dialog").close();toast("排程已儲存");await load();}catch(error){toast(error.message);}});
 await load();
+window.addEventListener("message",async event=>{if(event.source!==window.parent)return;const message=event.data;if(message?.type==="vixo-agents:thread-created"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({threadId:message.payload.threadId})});await load();}catch(error){toast(error.message);}}if(message?.type==="vixo-agents:thread-create-error"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({error:message.payload.error})});}catch{}toast(message.payload.error||"無法建立 Codex 任務");await load();}});
 try { window.parent.postMessage({ type: "vixo-agents:ready" }, "*"); } catch {}
 setInterval(load,5000);

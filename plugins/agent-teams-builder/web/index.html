@@ -36,6 +36,9 @@
       <div class="eyebrow">RUN WORKFLOW</div><h2>執行 Workflow</h2>
       <input type="hidden" name="agent"><input type="hidden" name="workflow">
       <label>執行宿主<select name="host"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
+      <label id="execution-mode-field">執行位置<select name="executionMode"><option value="codex-app">在 Codex 左側建立新任務</option><option value="background">背景 CLI 執行</option></select></label>
+      <label id="codex-project-field">Codex 專案<select name="projectId"></select></label>
+      <p id="codex-project-note" class="form-note">按下 Play 後會切換到所選專案、建立新的 Codex Session，並立即執行 Workflow。</p>
       <label>任務說明<textarea name="task" rows="4" required>執行這個 Workflow</textarea></label>
       <label>核准模式<select name="approvalMode"><option value="manual">遇到核准節點時暫停（建議）</option><option value="auto">本次自動核准 Workflow 節點</option></select></label>
       <p class="form-note">自動核准只套用於這個 Workflow 內建的確認節點，不會繞過 Codex／Claude Code 的工具權限與安全規則。</p>

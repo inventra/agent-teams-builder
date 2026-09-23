@@ -51,7 +51,7 @@ Downloads/Agent Teams/
 
 Codex 的正式 Plugin manifest 目前可宣告 Skills、MCP tools、Apps connector 與展示資訊，但沒有「自訂左側頁面」的正式欄位。Dashi Taskboard 使用的方式是本機服務加上 CDP 畫面注入，並非 Codex Plugin API。
 
-v1.4.0 已將固定左側按鈕實作為「Codex Desktop Bridge」，使用 loopback CDP、document-start 注入與 sandbox iframe，並在無法注入時回退到 Codex 原生瀏覽器面板。此 Bridge 與 Agent 核心資料分離，並有 Taskboard 共存順序測試。
+v1.5.0 已將固定左側按鈕實作為「Codex Desktop Bridge」，使用 loopback CDP、document-start 注入與 sandbox iframe，並在無法注入時回退到 Codex 原生瀏覽器面板。Play 時由 Bridge 切換使用者選擇的 Codex 專案，建立原生 Session，再回讀 `thread-project-assignments` 確認任務已綁定正確專案。此 Bridge 與 Agent 核心資料分離，並有 Taskboard 共存順序測試。
 
 ## 安全邊界
 

@@ -11,6 +11,7 @@
   const FRAME_ID = "vixo-agents-codex-frame";
   const STYLE_ID = "vixo-agents-codex-style";
   const PLUGIN_LABELS = ["plugins", "插件", "外掛程式", "プラグイン"];
+  const SEND_LABELS = ["send", "submit", "傳送", "送出", "發送"];
   const configuredUrl = String(window.__VIXO_AGENTS_DASHBOARD_URL__ || "").trim();
   const sourceHash = String(window.__VIXO_AGENTS_SOURCE_HASH__ || "development");
 
@@ -265,6 +266,213 @@
     }, 100);
   }
 
+  function requestNativeFetch(path, body) {
+    const bridge = window.electronBridge;
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const requestId = `vixo-native-fetch-${crypto.randomUUID()}`;
+      let settled = false;
+      const finish = (value = null) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timeout);
+        window.removeEventListener("message", onMessage);
+        resolve(value);
+      };
+      const onMessage = (event) => {
+        const message = event.data;
+        if (!message || message.type !== "fetch-response" || message.requestId !== requestId) return;
+        try { finish(JSON.parse(message.bodyJsonString || "null")); }
+        catch { finish(); }
+      };
+      const timeout = window.setTimeout(finish, 1500);
+      window.addEventListener("message", onMessage);
+      try {
+        bridge.sendMessageFromView({
+          type: "fetch",
+          requestId,
+          method: "POST",
+          url: `vscode://codex/${path}`,
+          body: JSON.stringify(body),
+        });
+      } catch { finish(); }
+    });
+  }
+
+  function normalizeNativeRootPath(value) {
+    const input = String(value || "").trim();
+    if (!input) return "";
+    const windowsPath = /^[A-Za-z]:[\\/]/.test(input) || input.includes("\\");
+    const normalizedSlashes = windowsPath ? input.replace(/\\/g, "/") : input;
+    const withoutTrailingSlash = normalizedSlashes.replace(/\/+$/, "")
+      || (normalizedSlashes.startsWith("/") ? "/" : normalizedSlashes);
+    if (!windowsPath || !/^[A-Za-z]:/.test(withoutTrailingSlash)) return withoutTrailingSlash;
+    return `${withoutTrailingSlash[0].toLowerCase()}${withoutTrailingSlash.slice(1)}`;
+  }
+
+  async function nativeProjects() {
+    const bootstrap = await window.electronBridge?.getInitialSidebarBootstrap?.();
+    const entries = new Map((bootstrap?.globalStateEntries || []).map((item) => [item?.key, item?.value]));
+    const projects = entries.get("local-projects") || {};
+    return Object.entries(projects).flatMap(([id, project]) => {
+      const workspacePath = Array.isArray(project?.rootPaths)
+        ? project.rootPaths.find((root) => typeof root === "string" && root.trim())
+        : null;
+      if (!id || !workspacePath) return [];
+      return [{ id, workspacePath }];
+    });
+  }
+
+  async function selectedNativeProjectId() {
+    const selected = (await requestNativeFetch("get-global-state", { key: "selected-project" }))?.value;
+    return typeof selected?.projectId === "string" ? selected.projectId : "";
+  }
+
+  async function activeNativeWorkspaceRoots() {
+    const roots = (await requestNativeFetch("active-workspace-roots", {}))?.roots;
+    return Array.isArray(roots) ? roots.filter((root) => typeof root === "string") : [];
+  }
+
+  async function switchToNativeProject(projectId, workspacePath) {
+    const bridge = window.electronBridge;
+    const projects = await nativeProjects();
+    const normalizedWorkspace = normalizeNativeRootPath(workspacePath);
+    const project = projects.find((candidate) => (
+      candidate.id === projectId
+      && normalizeNativeRootPath(candidate.workspacePath) === normalizedWorkspace
+    ));
+    if (!project) throw new Error("Codex 中找不到指定的專案或專案路徑已改變");
+    const projectRow = Array.from(document.querySelectorAll("[data-app-action-sidebar-project-row]"))
+      .find((candidate) => candidate.getAttribute("data-app-action-sidebar-project-id") === project.id);
+    if (projectRow) (projectRow.querySelector("[data-app-action-sidebar-select-project]") || projectRow).click();
+    else bridge.sendMessageFromView({ type: "electron-add-new-workspace-root-option", root: project.workspacePath });
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      const selectedId = await selectedNativeProjectId();
+      if (selectedId === project.id) return;
+      const roots = await activeNativeWorkspaceRoots();
+      if (normalizeNativeRootPath(roots[0]) === normalizedWorkspace) return;
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    throw new Error("Codex 未能切換到指定專案");
+  }
+
+  function dispatchHostMessage(message) {
+    window.postMessage(message, window.location.origin);
+  }
+
+  function threadRows() {
+    return Array.from(document.querySelectorAll("[data-app-action-sidebar-thread-id]"));
+  }
+
+  function normalizedThreadId(value) {
+    const threadId = String(value || "").trim();
+    if (threadId.includes("client-new-thread")) return "";
+    return threadId.startsWith("local:") ? threadId.slice("local:".length) : threadId;
+  }
+
+  async function knownNativeThreadIds() {
+    const memberships = (await requestNativeFetch("get-global-state", { key: "thread-project-membership-host-ids" }))?.value;
+    return new Set([
+      ...threadRows().map((row) => normalizedThreadId(row.getAttribute("data-app-action-sidebar-thread-id"))),
+      ...Object.keys(memberships && typeof memberships === "object" ? memberships : {}),
+    ].filter(Boolean));
+  }
+
+  async function nativeThreadProjectId(threadId) {
+    const assignments = (await requestNativeFetch("get-global-state", { key: "thread-project-assignments" }))?.value;
+    const assignment = assignments && typeof assignments === "object" ? assignments[threadId] : null;
+    return assignment?.projectKind === "local" && typeof assignment.projectId === "string"
+      ? assignment.projectId
+      : "";
+  }
+
+  function activeThreadId(excluded = new Set()) {
+    const rows = threadRows();
+    const activeRow = rows.find((row) => row.getAttribute("data-app-action-sidebar-thread-active") === "true")
+      || rows.find((row) => ["page", "true"].includes(row.getAttribute("aria-current")))
+      || rows.find((row) => !excluded.has(row.getAttribute("data-app-action-sidebar-thread-id")));
+    return normalizedThreadId(activeRow?.getAttribute("data-app-action-sidebar-thread-id"));
+  }
+
+  async function submitPrefilledComposer(instruction) {
+    const deadline = Date.now() + 10_000;
+    let textbox = null;
+    while (Date.now() < deadline) {
+      textbox = Array.from(document.querySelectorAll('[contenteditable="true"][role="textbox"]'))
+        .find((candidate) => !candidate.closest(`#${PAGE_ID}`));
+      const text = String(textbox?.innerText || textbox?.textContent || "").trim();
+      if (textbox && text && (text.includes(instruction.slice(0, 36)) || instruction.includes(text.slice(0, 36)))) break;
+      await new Promise((resolve) => window.setTimeout(resolve, 80));
+    }
+    if (!textbox) throw new Error("Codex 新任務輸入框沒有出現");
+    textbox.focus();
+    const submit = Array.from(document.querySelectorAll("button"))
+      .find((button) => {
+        if (button.disabled || button.closest(`#${PAGE_ID}`)) return false;
+        const label = normalized(button.getAttribute("aria-label") || button.getAttribute("title") || button.textContent);
+        return button.type === "submit" || SEND_LABELS.some((candidate) => label === candidate || label.includes(candidate));
+      });
+    if (submit) submit.click();
+    else {
+      for (const type of ["keydown", "keypress", "keyup"]) {
+        textbox.dispatchEvent(new KeyboardEvent(type, {
+          key: "Enter",
+          code: "Enter",
+          keyCode: 13,
+          which: 13,
+          bubbles: true,
+          cancelable: true,
+        }));
+      }
+    }
+  }
+
+  async function createNativeThread(payload) {
+    const runId = String(payload?.runId || "").trim();
+    const projectId = String(payload?.projectId || "").trim();
+    const workspacePath = String(payload?.workspacePath || "").trim();
+    const instruction = String(payload?.instruction || "").trim();
+    if (!runId || !projectId || !workspacePath || !instruction) throw new Error("建立 Codex 任務所需資料不完整");
+    const bridge = window.electronBridge;
+    if (!bridge || typeof bridge.sendMessageFromView !== "function") throw new Error("目前 Codex 版本沒有提供桌面任務建立能力");
+    const previousThreadIds = await knownNativeThreadIds();
+    await switchToNativeProject(projectId, workspacePath);
+    close();
+    dispatchHostMessage({
+      type: "navigate-to-route",
+      path: "/",
+      state: {
+        focusComposerNonce: crypto.randomUUID(),
+        prefillPrompt: instruction,
+        project: { type: "local", projectId },
+      },
+    });
+    await submitPrefilledComposer(instruction);
+    const deadline = Date.now() + 15_000;
+    while (Date.now() < deadline) {
+      const currentThreadIds = await knownNativeThreadIds();
+      const threadId = [...currentThreadIds].find((candidate) => !previousThreadIds.has(candidate))
+        || activeThreadId(previousThreadIds);
+      if (
+        threadId
+        && !previousThreadIds.has(threadId)
+        && await nativeThreadProjectId(threadId) === projectId
+      ) return { runId, threadId, projectId };
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
+    }
+    throw new Error("Codex 已送出任務，但無法確認 Session 已綁定到指定專案");
+  }
+
+  function openNativeThread(threadId) {
+    const normalizedThreadId = String(threadId || "").trim();
+    if (!normalizedThreadId) return;
+    close();
+    const row = threadRows().find((candidate) => candidate.getAttribute("data-app-action-sidebar-thread-id") === normalizedThreadId);
+    if (row?.isConnected) row.click();
+    else dispatchHostMessage({ type: "navigate-to-route", path: `/local/${encodeURIComponent(normalizedThreadId)}` });
+  }
+
   function onDocumentClick(event) {
     if (!active) return;
     const clickable = event.target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
@@ -274,9 +482,24 @@
 
   function onFrameMessage(event) {
     if (!frame || event.source !== frame.contentWindow) return;
-    if (event.data?.type !== "vixo-agents:ready") return;
-    loaded = true;
-    page.dataset.loaded = "true";
+    if (event.data?.type === "vixo-agents:ready") {
+      loaded = true;
+      page.dataset.loaded = "true";
+      return;
+    }
+    if (event.data?.type === "vixo-agents:create-codex-thread") {
+      void createNativeThread(event.data.payload).then((payload) => {
+        frame?.contentWindow?.postMessage({ type: "vixo-agents:thread-created", payload }, "*");
+      }, (error) => {
+        open();
+        frame?.contentWindow?.postMessage({
+          type: "vixo-agents:thread-create-error",
+          payload: { runId: event.data.payload?.runId, error: error instanceof Error ? error.message : String(error) },
+        }, "*");
+      });
+      return;
+    }
+    if (event.data?.type === "vixo-agents:open-codex-thread") openNativeThread(event.data.threadId);
   }
 
   function destroy() {
@@ -301,7 +524,7 @@
     };
   }
 
-  const api = { sourceHash, dashboardUrl, open, close, refresh, destroy, status };
+  const api = { sourceHash, dashboardUrl, open, close, refresh, destroy, status, createNativeThread, openNativeThread };
   window[SENTINEL] = api;
   document.addEventListener("click", onDocumentClick, true);
   window.addEventListener("message", onFrameMessage);
