@@ -9,6 +9,7 @@
 - 頁面更新只會執行安裝於 `下載/Agent Teams/.system/updater/install.mjs` 的固定更新器，不接受任意 repo、URL 或執行檔路徑。
 - 更新沿用固定 commit SHA、50 MB 上限、archive SHA-256、安裝後 SHA 讀回證明與失敗保留上一版機制；成功時整包替換 Plugin、Dashboard、Skills 與執行功能並重新啟動。
 - 發行包內含 `release-metadata.json`，第一次安裝即記錄來源 commit，避免安裝後誤判同一版為新版。
+- 實機首次按頁面更新時，更新器安全失敗並保留舊版；定位為安裝階段的一次性 `SKIP_UPDATE` 被背景服務繼承。已在 Dashboard、獨立 runner 與子更新器三層清除／覆寫該旗標，並納入後續實機重測。
 
 ## v1.6.0 已知邊界
 

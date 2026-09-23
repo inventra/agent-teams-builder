@@ -129,7 +129,7 @@ export function startUpdate(options = {}) {
     windowsHide: true,
     shell: false,
     stdio: "ignore",
-    env: { ...process.env, AGENT_TEAMS_HOME: root, AGENT_TEAMS_INSTALL_ROOT: root, VIXO_UPDATER_SCRIPT: updater }
+    env: { ...process.env, AGENT_TEAMS_SKIP_UPDATE: "0", AGENT_TEAMS_HOME: root, AGENT_TEAMS_INSTALL_ROOT: root, VIXO_UPDATER_SCRIPT: updater }
   });
   child.once?.("error", (error) => writeJson(operationFile, {
     status: "failed",

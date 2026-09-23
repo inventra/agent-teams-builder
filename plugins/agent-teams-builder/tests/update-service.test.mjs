@@ -60,6 +60,7 @@ test("dashboard update starts only the installed updater through the fixed runne
     assert.equal(invocation.command, process.execPath);
     assert.deepEqual(invocation.args, [runner]);
     assert.equal(invocation.options.env.VIXO_UPDATER_SCRIPT, updater);
+    assert.equal(invocation.options.env.AGENT_TEAMS_SKIP_UPDATE, "0");
     assert.equal(JSON.parse(fs.readFileSync(path.join(root, ".system", "update-runtime.json"), "utf8")).status, "queued");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

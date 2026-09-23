@@ -29,7 +29,7 @@ try {
     windowsHide: true,
     shell: false,
     stdio: ["ignore", output, output],
-    env: { ...process.env, AGENT_TEAMS_HOME: root, AGENT_TEAMS_INSTALL_ROOT: root }
+    env: { ...process.env, AGENT_TEAMS_SKIP_UPDATE: "0", AGENT_TEAMS_HOME: root, AGENT_TEAMS_INSTALL_ROOT: root }
   });
   if (result.status !== 0) throw new Error(result.error?.message || `Updater exited with status ${result.status}`);
   const state = JSON.parse(fs.readFileSync(path.join(systemRoot, "update-state.json"), "utf8"));

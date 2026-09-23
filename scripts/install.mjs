@@ -342,15 +342,24 @@ function stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, runtimeNode = pr
   if (fs.existsSync(dashboard)) commandResult(runtimeNode, [dashboard, "stop"], { env });
 }
 
+function dashboardEnvironment(agentTeamsRoot) {
+  const env = { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot };
+  delete env.AGENT_TEAMS_SKIP_UPDATE;
+  delete env.AGENT_TEAMS_SOURCE_REVISION;
+  delete env.AGENT_TEAMS_SOURCE_COMMIT_DATE;
+  delete env.AGENT_TEAMS_ARCHIVE_SHA256;
+  return env;
+}
+
 function launchDashboard(agentTeamsRoot, pluginRoot, runtimeNode, { open = true, restart = false } = {}) {
   if (process.env.AGENT_TEAMS_SKIP_DASHBOARD === "1" || process.env.AGENT_TEAMS_SKIP_NPM === "1") {
     return { started: false, skipped: true };
   }
   const script = path.join(pluginRoot, "scripts", "vixo-agents-dashboard.mjs");
   if (!fs.existsSync(script)) return { started: false, error: "Dashboard runtime is not installed" };
-  if (restart) commandResult(runtimeNode, [script, "stop"], { env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot } });
+  if (restart) commandResult(runtimeNode, [script, "stop"], { env: dashboardEnvironment(agentTeamsRoot) });
   const result = commandResult(runtimeNode, [script, open ? "open" : "start"], {
-    env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot }
+    env: dashboardEnvironment(agentTeamsRoot)
   });
   let runtime = null;
   try { runtime = JSON.parse(result.stdout); } catch {}
@@ -366,7 +375,7 @@ function launchCodexEmbed(agentTeamsRoot, pluginRoot, runtimeNode) {
   const script = path.join(pluginRoot, "scripts", "vixo-codex-embed.mjs");
   if (!fs.existsSync(script)) return { started: false, error: "Codex embed runtime is not installed" };
   const result = commandResult(runtimeNode, [script, "open"], {
-    env: { ...process.env, AGENT_TEAMS_HOME: agentTeamsRoot }
+    env: dashboardEnvironment(agentTeamsRoot)
   });
   let runtime = null;
   try { runtime = JSON.parse(result.stdout); } catch {}
