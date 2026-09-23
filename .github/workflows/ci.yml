@@ -22,6 +22,7 @@ jobs:
         if: runner.os == 'Windows'
         with:
           go-version: stable
+          cache: false
       - name: Install plugin runtime dependencies
         run: npm ci --prefix plugins/agent-teams-builder --no-audit --no-fund
       - name: Run automated tests
