@@ -151,6 +151,26 @@ function writeJson(file, value) {
   fs.renameSync(temporary, file);
 }
 
+function readReleaseMetadata(sourceRoot) {
+  try {
+    const metadata = readJson(path.join(sourceRoot, "release-metadata.json"));
+    return metadata?.repository === UPDATE_SOURCE.repository ? metadata : null;
+  } catch {
+    return null;
+  }
+}
+
+function installUpdaterScript(sourceRoot, agentTeamsRoot) {
+  const source = path.join(sourceRoot, "scripts", "install.mjs");
+  const destination = path.join(agentTeamsRoot, ".system", "updater", "install.mjs");
+  if (sameFile(source, destination)) return destination;
+  fs.mkdirSync(path.dirname(destination), { recursive: true });
+  const temporary = `${destination}.tmp-${process.pid}-${Date.now()}`;
+  fs.copyFileSync(source, temporary);
+  fs.renameSync(temporary, destination);
+  return destination;
+}
+
 function patchJsonVersion(file, version, marketplace = false) {
   const value = readJson(file);
   if (marketplace) {
@@ -377,7 +397,8 @@ export function install(options = {}) {
   if (!compatibleHost) throw new Error(`Installed hosts are too old. Minimums: Codex ${MINIMUMS.codex}, Claude Code ${MINIMUMS.claude}`);
   const skipLogin = options.skipLogin || process.env.AGENT_TEAMS_SKIP_LOGIN === "1";
   const skipNpm = options.skipNpm || process.env.AGENT_TEAMS_SKIP_NPM === "1";
-  const sourceRevision = options.sourceRevision || process.env.AGENT_TEAMS_SOURCE_REVISION || "bundled";
+  const releaseMetadata = readReleaseMetadata(sourceRoot);
+  const sourceRevision = options.sourceRevision || process.env.AGENT_TEAMS_SOURCE_REVISION || releaseMetadata?.sourceRevision || "bundled";
   const baseVersion = readJson(path.join(sourceRoot, "plugins", PLUGIN, "package.json")).version;
   const runtimeVersion = options.runtimeVersion || buildRuntimeVersion(baseVersion, sourceRevision, options.now || new Date());
   const authentication = {};
@@ -386,6 +407,7 @@ export function install(options = {}) {
   const runtime = installBundledRuntime(sourceRoot, agentTeamsRoot);
   stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, runtime.node);
   const copied = copyRelease(sourceRoot, marketplaceRoot, skipNpm, runtimeVersion, runtime);
+  const updaterScript = installUpdaterScript(sourceRoot, agentTeamsRoot);
   const results = {};
   if (compatibility.codex?.compatible) {
     results.codex = authentication.codex.loggedIn || authentication.codex.skipped
@@ -426,7 +448,7 @@ export function install(options = {}) {
     installedAt: new Date().toISOString(),
     installedVersion: copied.installedVersion,
     sourceRevision,
-    sourceCommitDate: options.sourceCommitDate || process.env.AGENT_TEAMS_SOURCE_COMMIT_DATE || null,
+    sourceCommitDate: options.sourceCommitDate || process.env.AGENT_TEAMS_SOURCE_COMMIT_DATE || releaseMetadata?.sourceCommitDate || null,
     archiveSha256: options.archiveSha256 || process.env.AGENT_TEAMS_ARCHIVE_SHA256 || null,
     agentTeamsRoot,
     marketplaceRoot,
@@ -441,6 +463,7 @@ export function install(options = {}) {
     dashboard,
     codexEmbed,
     dashboardLaunchers,
+    updaterScript,
     runtime: { bundled: runtime.bundled, key: runtime.key, node: runtime.node },
     notes: [
       "Claude Desktop is detected separately; Claude Code CLI is the supported local plugin host used by this installer.",

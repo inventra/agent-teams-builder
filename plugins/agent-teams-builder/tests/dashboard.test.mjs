@@ -65,7 +65,13 @@ process.stdin.on("end", () => {
   }
   const oldPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
-  const { server, token } = createDashboardServer({ token: "a".repeat(64) });
+  const updateRevision = "a".repeat(40);
+  const { server, token } = createDashboardServer({
+    token: "a".repeat(64),
+    updateOptions: { fetchImpl: async (url) => url.includes("package.json")
+      ? { ok: true, json: async () => ({ version: "1.6.0" }) }
+      : { ok: true, json: async () => ({ sha: updateRevision }) } }
+  });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const port = server.address().port;
   try {
@@ -76,6 +82,8 @@ process.stdin.on("end", () => {
     const state = await allowed.json();
     assert.equal(state.agents[0].workflows[0].id, "monthly-close");
     assert.equal(state.hosts.codex, true);
+    assert.equal(state.update.available, true);
+    assert.equal(state.update.latestVersion, "1.6.0");
     assert.deepEqual(state.codexProjects.map(({ id, name, selected, isGitRepository }) => ({ id, name, selected, isGitRepository })), [
       { id: "project-1", name: "範例專案", selected: true, isGitRepository: true }
     ]);

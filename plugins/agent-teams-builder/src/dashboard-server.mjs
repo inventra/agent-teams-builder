@@ -7,6 +7,7 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
+import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webRoot = path.join(packageRoot, "web");
@@ -406,7 +407,7 @@ function recentRuns() {
     .map(publicRun);
 }
 
-function dashboardState() {
+function dashboardState(update = null) {
   const codexProjects = availableHost("codex") ? listCodexProjects() : [];
   return {
     product: "VIXO Agents",
@@ -416,6 +417,7 @@ function dashboardState() {
     runs: recentRuns(),
     hosts: { codex: availableHost("codex"), claude: availableHost("claude") },
     codexProjects,
+    update: update ? { ...update, operation: readUpdateOperation(ensureAgentTeamsRoot()) } : null,
     refreshedAt: new Date().toISOString()
   };
 }
@@ -499,7 +501,7 @@ function contentType(file) {
   return "application/octet-stream";
 }
 
-export function createDashboardServer({ token = crypto.randomBytes(32).toString("hex") } = {}) {
+export function createDashboardServer({ token = crypto.randomBytes(32).toString("hex"), updateOptions = {} } = {}) {
   return {
     token,
     server: http.createServer(async (request, response) => {
@@ -508,7 +510,20 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === "OPTIONS") return send(response, 204, "");
         if (url.pathname === "/health") return send(response, 200, { status: "ok", product: "vixo-agents", pid: process.pid });
         if (url.pathname.startsWith("/api/") && !authOkay(request, token)) return send(response, 401, { error: "Unauthorized" });
-        if (request.method === "GET" && url.pathname === "/api/state") return send(response, 200, dashboardState());
+        if (request.method === "GET" && url.pathname === "/api/state") {
+          const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions });
+          return send(response, 200, dashboardState(update));
+        }
+        if (request.method === "POST" && url.pathname === "/api/update/check") {
+          const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions, force: true });
+          return send(response, 200, { ...update, operation: readUpdateOperation(ensureAgentTeamsRoot()) });
+        }
+        if (request.method === "POST" && url.pathname === "/api/update/apply") {
+          const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions, force: true });
+          if (update.error) throw new Error(update.error);
+          if (!update.available) return send(response, 200, { status: "up-to-date", update });
+          return send(response, 202, startUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), runner: updateOptions.runner, spawnImpl: updateOptions.spawnImpl }));
+        }
         if (request.method === "POST" && url.pathname === "/api/runs") {
           const body = await bodyJson(request);
           if (body.host === "codex" && body.executionMode === "codex-app") {

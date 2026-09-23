@@ -23,9 +23,11 @@
 
 ## 更新
 
-從 v1.2.0 起，不需要重新下載新的安裝器。老師把 Skill 或程式碼 push 到 GitHub `main` 後，學員再次雙擊原本的安裝檔，就會自動檢查、下載並安裝最新版。若沒有更新則不重裝；若 GitHub 暫時無法連線，已安裝版本會原封不動保留，避免舊 ZIP 覆蓋新版本。
+從 v1.6.0 起，VIXO Agents 頁面會定期檢查 GitHub `main`。老師把 Skill 或程式碼 push 後，學員會在頁面看到新版提示，按「立即更新」即可同步 Plugin、Dashboard、Skills 與功能。頁面右上角也能手動按「檢查更新」。
 
-安全邊界：更新來源固定為公開 repo `inventra/agent-teams-builder`，只下載 GitHub 回傳的 40 位 commit SHA 對應 archive，限制 50 MB，並記錄本機下載內容的 SHA-256。v1.1.0 沒有內建更新器，所以既有使用者必須先下載 v1.2.0 一次；之後即可持續使用同一份檔案更新。
+原本的一鍵安裝檔也仍是更新器：再次雙擊就會自動檢查、下載並安裝最新版。若沒有更新則不重裝；若 GitHub 暫時無法連線，已安裝版本會原封不動保留，避免舊 ZIP 覆蓋新版本。
+
+安全邊界：更新來源固定為公開 repo `inventra/agent-teams-builder`，只下載 GitHub 回傳的 40 位 commit SHA 對應 archive，限制 50 MB，並記錄本機下載內容的 SHA-256。v1.5.0 與更舊版本尚未包含頁面更新按鈕，所以既有使用者必須先安裝 v1.6.0 一次；之後即可直接從頁面更新。
 
 安裝後請開新的 Session，說：「列出我的 Agent Teams」或「把目前流程建立成 Agent 小美，用途是查詢航班」。
 

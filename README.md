@@ -4,22 +4,24 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.5.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
 
 壓縮包內建 macOS arm64、macOS Intel 與 Windows x64 的 Node.js Runtime，使用者不需要另外安裝 Node.js。電腦仍需要至少一個宿主：Claude Code 2.1.265 以上或 Codex CLI 0.148.0 以上。安裝器會自動偵測、安裝到所有可用宿主，並在未登入時啟動官方瀏覽器登入流程。
 
-## 同一個檔案自動更新
+## 頁面提示與一鍵自動更新
 
-從 v1.2.0 起，`install.command`、`Install-Agent-Builder.cmd` 與 `Install-Agent-Builder.ps1` 同時是安裝器與更新器。每次點擊會檢查公開 GitHub repo 的 `main`：
+從 v1.6.0 起，VIXO Agents 頁面會定期檢查公開 GitHub repo 的 `main`。發現新版時會顯示更新提示，按下「立即更新」即可同步更新 Plugin、Dashboard、Skills 與執行功能，完成後會自動重新啟動。頁面右上角也可隨時按「檢查更新」。
+
+`install.command`、`Install-Agent-Builder.cmd` 與 `Install-Agent-Builder.ps1` 仍同時是安裝器與更新器。每次點擊也會檢查 `main`：
 
 - 有新 commit：下載該固定 commit 的 ZIP，更新本機 Marketplace，並讓 Claude Code／Codex 重新安裝最新版。
 - 沒有新 commit：顯示已是最新版，不重複安裝。
 - GitHub 暫時無法連線：已安裝的電腦保留目前版本，不會被舊 ZIP 降版；第一次安裝則可使用 ZIP 內附版本。
 
-因此日後只要把 Skill 或程式碼 push 到 `main`，學員再次點擊手上的同一份 v1.2.0（或更新版）安裝檔即可同步，不需要另外下載每次的 Release。更新紀錄會寫入 `下載/Agent Teams/.system/update-state.json`，包含 commit SHA、安裝版本與下載檔 SHA-256。v1.1.0 本身尚未包含更新器，既有使用者需要先下載 v1.2.0 一次。
+因此日後只要把 Skill 或程式碼 push 到 `main`，學員可直接在 VIXO Agents 頁面更新，也能再次點擊手上的同一份安裝檔，不需要另外下載每次的 Release。更新紀錄會寫入 `下載/Agent Teams/.system/update-state.json`，包含 commit SHA、安裝版本與下載檔 SHA-256。v1.5.0 與更舊版本尚未包含頁面更新按鈕，既有使用者需要先安裝 v1.6.0 一次。
 
 ## 可以做什麼
 
@@ -52,13 +54,13 @@
 
 登入時只會啟動宿主官方登入命令與瀏覽器頁面。Plugin 不會讀取、保存或傳送使用者的帳號密碼。
 
-Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。v1.5.0 延續 Dashi Taskboard 的桌面 Bridge 做法，在可用的 Codex CDP Renderer 中加入 `VIXO Agents` 側欄頁面，並使用 Codex 原生專案路由建立任務；若當前環境無法安全注入，會回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
+Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。v1.6.0 延續 Dashi Taskboard 的桌面 Bridge 做法，在可用的 Codex CDP Renderer 中加入 `VIXO Agents` 側欄頁面，並使用 Codex 原生專案路由建立任務；若當前環境無法安全注入，會回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
 
 詳情請看 [安裝說明](README-安裝說明.md) 與 [測試報告](TEST-REPORT.md)。
 
 ## 驗證狀態
 
-- 30 個自動化測試與 Codex 側欄實機穩定性檢查通過。
+- 32 個自動化測試與 Codex 側欄實機穩定性檢查通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

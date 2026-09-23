@@ -15,6 +15,13 @@ const archive = path.join(root, "dist", `${releaseName}.zip`);
 const nodeVersion = process.env.VIXO_BUNDLED_NODE_VERSION || process.versions.node;
 const nodeBase = `https://nodejs.org/dist/v${nodeVersion}`;
 
+function sourceMetadata() {
+  const revision = run("git", ["rev-parse", "HEAD"], { cwd: root }).stdout.trim();
+  if (!/^[0-9a-f]{40}$/i.test(revision)) throw new Error("Unable to resolve the release source commit");
+  const sourceCommitDate = run("git", ["show", "-s", "--format=%cI", revision], { cwd: root }).stdout.trim();
+  return { repository: "inventra/agent-teams-builder", branch: "main", sourceRevision: revision, sourceCommitDate, version, builtAt: new Date().toISOString() };
+}
+
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", shell: false, ...options });
   if (result.status !== 0) throw new Error(`${command} failed: ${(result.stderr || result.stdout || result.error?.message || "unknown error").trim()}`);
@@ -100,6 +107,7 @@ for (const relative of [
   "package.json",
   "scripts/install.mjs"
 ]) copy(path.join(root, relative), path.join(stage, relative));
+fs.writeFileSync(path.join(stage, "release-metadata.json"), `${JSON.stringify(sourceMetadata(), null, 2)}\n`, "utf8");
 copy(path.join(root, "plugins", "agent-teams-builder"), path.join(stage, "plugins", "agent-teams-builder"), {
   filter: (source) => !source.includes(`${path.sep}node_modules${path.sep}`) && !source.endsWith(`${path.sep}node_modules`)
 });

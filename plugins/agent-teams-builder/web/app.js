@@ -5,6 +5,7 @@ try { if (token) sessionStorage.setItem("vixo-token", token); } catch {}
 const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 let state = null;
 let selected = "all";
+let dismissedUpdateSuccess = null;
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
 const toast = (message) => { const el=document.querySelector("#toast"); el.textContent=message; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2600); };
@@ -20,6 +21,26 @@ function renderNav() {
   const nav=document.querySelector("#agent-nav");
   nav.innerHTML=`<button class="nav-item ${selected==="all"?"active":""}" data-id="all">員工總覽<span>${state.agents.length} 位員工</span></button>`+state.agents.map(agent=>`<button class="nav-item ${selected===agent.id?"active":""}" data-id="${esc(agent.id)}">${esc(agent.displayName)}<span>${agent.skills.length} Skills · ${(agent.workflows||[]).length} Workflows</span></button>`).join("");
   nav.querySelectorAll("button").forEach(button=>button.onclick=()=>{selected=button.dataset.id;render();});
+}
+
+function renderUpdate() {
+  const banner=document.querySelector("#update-banner"), update=state.update;
+  if(!update){banner.hidden=true;return;}
+  const operation=update.operation;
+  if(operation?.status==="running"||operation?.status==="queued"){
+    banner.hidden=false;banner.className="update-banner running";banner.innerHTML=`<div><strong>正在更新 VIXO Agents…</strong><p>Plugin、頁面與 Skills 更新完成後會自動重新啟動，約需 1–3 分鐘。</p></div><span class="update-spinner" aria-hidden="true"></span>`;return;
+  }
+  if(operation?.status==="failed"){
+    banner.hidden=false;banner.className="update-banner failed";banner.innerHTML=`<div><strong>上次更新沒有完成</strong><p>${esc(operation.error||"請重新執行更新。")}</p></div><button class="secondary apply-update">重試更新</button>`;return;
+  }
+  if(operation?.status==="succeeded"&&operation.revision===update.currentRevision&&!update.available&&dismissedUpdateSuccess!==operation.revision){
+    banner.hidden=false;banner.className="update-banner success";banner.innerHTML=`<div><strong>已更新完成</strong><p>目前版本 ${esc(update.currentVersion)}，Plugin、頁面與 Skills 已同步。</p></div><button class="banner-close" aria-label="關閉">×</button>`;return;
+  }
+  if(update.available){
+    const latest=update.latestVersion?`v${update.latestVersion}`:`${update.latestRevision.slice(0,12)}`;
+    banner.hidden=false;banner.className="update-banner available";banner.innerHTML=`<div><span class="update-pill">NEW</span><strong>VIXO Agents 有新版 ${esc(latest)}</strong><p>按一次即可一起更新 Plugin、操作頁面、Skills 與執行功能。</p></div><button class="primary apply-update">立即更新</button>`;return;
+  }
+  banner.hidden=true;
 }
 
 function workflowCard(agent, workflow) {
@@ -45,6 +66,8 @@ function renderRuns() {
 }
 
 function bindActions() {
+  document.querySelectorAll(".apply-update").forEach(button=>button.onclick=async()=>{if(!confirm("要立即更新 VIXO Agents 嗎？更新時頁面會短暫重新啟動。"))return;button.disabled=true;try{await api("/api/update/apply",{method:"POST",body:"{}"});toast("已開始更新，完成後會自動重新連線");await load();}catch(error){button.disabled=false;toast(error.message);}});
+  document.querySelectorAll(".banner-close").forEach(button=>button.onclick=()=>{dismissedUpdateSuccess=state.update?.operation?.revision||"dismissed";document.querySelector("#update-banner").hidden=true;});
   document.querySelectorAll(".play").forEach(button=>button.onclick=()=>{
     const form=document.querySelector("#run-form");form.elements.agent.value=button.dataset.agent;form.elements.workflow.value=button.dataset.workflow;
     form.elements.host.value=state.hosts.codex?"codex":"claude";form.elements.host.onchange?.();document.querySelector("#run-dialog").showModal();
@@ -79,6 +102,7 @@ function configureRunForm() {
 
 function render() {
   renderNav();
+  renderUpdate();
   const agents=selected==="all"?state.agents:state.agents.filter(agent=>agent.id===selected);
   const skillCount=state.agents.reduce((sum,agent)=>sum+agent.skills.length,0), workflowCount=state.agents.reduce((sum,agent)=>sum+(agent.workflows||[]).length,0), scheduled=state.schedules.filter(item=>item.enabled).length;
   document.querySelector("#summary").innerHTML=[[state.agents.length,"已訓練員工"],[skillCount,"Skills"],[workflowCount,"Workflows"],[scheduled,"自動排程"]].map(([n,label])=>`<div class="metric"><b>${n}</b><span>${label}</span></div>`).join("");
@@ -92,6 +116,7 @@ function render() {
 
 async function load(){try{state=await api("/api/state");render();}catch(error){document.querySelector("#content").innerHTML=`<div class="empty"><h2>無法載入</h2><p>${esc(error.message)}</p></div>`;}}
 document.querySelector("#refresh").onclick=load;
+document.querySelector("#check-update").onclick=async()=>{const button=document.querySelector("#check-update");button.disabled=true;try{state.update=await api("/api/update/check",{method:"POST",body:"{}"});render();toast(state.update.error?`無法檢查更新：${state.update.error}`:state.update.available?"找到新版，可立即更新":"目前已是最新版");}catch(error){toast(error.message);}finally{button.disabled=false;}};
 document.querySelector("#run-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#run-dialog").close();if(run.nativeLaunch){window.parent.postMessage({type:"vixo-agents:create-codex-thread",payload:run.nativeLaunch},"*");toast(`正在 ${run.nativeLaunch.projectName} 建立 Codex 任務`);}else toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}});
 document.querySelector("#schedule-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{await api("/api/schedules",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#schedule-dialog").close();toast("排程已儲存");await load();}catch(error){toast(error.message);}});
 await load();

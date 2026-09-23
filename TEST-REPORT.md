@@ -1,8 +1,22 @@
-# VIXO Agent Teams Builder 1.5.0 測試報告
+# VIXO Agent Teams Builder 1.6.0 測試報告
 
 測試日期：2026-09-24（Asia/Taipei）
 
-## v1.5.0 已通過
+## v1.6.0 已通過
+
+- 32 個自動化測試包含安裝、登入、安全更新、Dashboard 更新提示、固定更新執行器、MCP、Double Check、秘密掃描、多 Skill、Workflow 與 Dashboard。
+- Dashboard 啟動時與手動按鈕可檢查 GitHub `main`；遠端 commit 不同時顯示新版版本、立即更新按鈕與更新中／成功／失敗狀態。
+- 頁面更新只會執行安裝於 `下載/Agent Teams/.system/updater/install.mjs` 的固定更新器，不接受任意 repo、URL 或執行檔路徑。
+- 更新沿用固定 commit SHA、50 MB 上限、archive SHA-256、安裝後 SHA 讀回證明與失敗保留上一版機制；成功時整包替換 Plugin、Dashboard、Skills 與執行功能並重新啟動。
+- 發行包內含 `release-metadata.json`，第一次安裝即記錄來源 commit，避免安裝後誤判同一版為新版。
+
+## v1.6.0 已知邊界
+
+- v1.5.0 與更舊版本的頁面沒有「立即更新」按鈕，必須先用 v1.6.0 安裝包更新一次；之後才能完全從頁面更新。
+- GitHub 無法連線時，頁面會保留目前版本並顯示檢查失敗；不會以舊檔覆蓋。
+- Windows EXE 與 macOS App 尚未簽章，Gatekeeper 或 SmartScreen 可能顯示安全確認。
+
+## v1.5.0 歷史驗證
 
 - 30 個自動化測試包含安裝、登入、自動更新、MCP、Double Check、秘密掃描、多 Skill、Workflow 與 Dashboard。
 - Codex 原生 Play 實機驗證：選擇專案後建立新 Session，任務內容成功執行，並從 `thread-project-assignments` 讀回與選擇專案相同的 Project ID。
@@ -15,7 +29,7 @@
 - Codex Plugin validator：通過。
 - Claude Code `plugin validate --strict --json`：通過，0 errors、0 warnings。
 
-## v1.5.0 已知邊界
+### v1.5.0 已知邊界
 
 - Codex 正式 Plugin manifest 仍沒有自訂左側頁面欄位；本版側欄是桌面 CDP/DOM Bridge，不是官方側欄 API，並有原生瀏覽器面板回退。
 - 排程由 Dashboard 背景服務觸發；電腦關機或服務停止時不會補跑。

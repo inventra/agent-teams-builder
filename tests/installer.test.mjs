@@ -82,6 +82,8 @@ test("installer configures every detected compatible CLI", () => {
     assert.match(macLauncher, /vixo-codex-embed\.mjs/);
     assert.match(windowsLauncher, /vixo-codex-embed\.mjs/);
     assert.ok(fs.existsSync(path.join(report.pluginRoot, "inject", "vixo-agents.user.js")));
+    assert.ok(fs.existsSync(report.updaterScript));
+    assert.equal(fs.readFileSync(report.updaterScript, "utf8"), fs.readFileSync(path.join(sourceRoot, "scripts", "install.mjs"), "utf8"));
     assert.equal(report.authentication.codex.loggedIn, true);
     assert.equal(report.authentication.claude.loggedIn, true);
     assert.doesNotMatch(calls, /codex login\n/);
