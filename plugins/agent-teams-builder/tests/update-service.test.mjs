@@ -65,3 +65,27 @@ test("dashboard update starts only the installed updater through the fixed runne
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("dashboard invalidates its version cache when installation state changes", async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "vixo-update-cache-"));
+  const stateFile = path.join(root, ".system", "update-state.json");
+  fs.mkdirSync(path.dirname(stateFile), { recursive: true });
+  fs.writeFileSync(stateFile, `${JSON.stringify({ revision: CURRENT, installedVersion: "1.5.0" })}\n`);
+  let requests = 0;
+  const fetchImpl = async (url) => {
+    requests += 1;
+    return url.includes("package.json") ? response({ version: "1.6.0" }) : response({ sha: LATEST });
+  };
+  resetUpdateCacheForTests();
+  try {
+    assert.equal((await checkForUpdate({ agentTeamsRoot: root, fetchImpl })).available, true);
+    fs.writeFileSync(stateFile, `${JSON.stringify({ revision: LATEST, installedVersion: "1.6.0" })}\n`);
+    const refreshed = await checkForUpdate({ agentTeamsRoot: root, fetchImpl });
+    assert.equal(refreshed.available, false);
+    assert.equal(refreshed.currentVersion, "1.6.0");
+    assert.equal(requests, 4);
+  } finally {
+    resetUpdateCacheForTests();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});

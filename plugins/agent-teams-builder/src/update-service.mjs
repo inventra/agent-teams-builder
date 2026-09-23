@@ -57,11 +57,12 @@ export function readUpdateOperation(agentTeamsRoot) {
 
 export async function checkForUpdate(options = {}) {
   const now = options.now || Date.now();
-  if (!options.force && cached && now - Date.parse(cached.checkedAt) < CHECK_TTL_MS) return cached;
+  const root = installedRoot(options.agentTeamsRoot);
+  const state = readJson(path.join(root, ".system", "update-state.json"), {});
+  const currentRevision = state.revision || "bundled";
+  if (!options.force && cached && cached.currentRevision === currentRevision && now - Date.parse(cached.checkedAt) < CHECK_TTL_MS) return cached;
   if (!options.force && pending) return pending;
   const task = (async () => {
-    const root = installedRoot(options.agentTeamsRoot);
-    const state = readJson(path.join(root, ".system", "update-state.json"), {});
     const headers = {
       Accept: "application/vnd.github+json",
       "X-GitHub-Api-Version": "2022-11-28",
@@ -87,7 +88,7 @@ export async function checkForUpdate(options = {}) {
         available: state.revision !== remote.sha,
         currentVersion: state.installedVersion || currentPackage.version,
         latestVersion,
-        currentRevision: state.revision || "bundled",
+        currentRevision,
         latestRevision: remote.sha,
         releaseUrl: `https://github.com/${UPDATE_SOURCE.repository}/commits/${remote.sha}`,
         checkedAt,
@@ -98,7 +99,7 @@ export async function checkForUpdate(options = {}) {
         available: false,
         currentVersion: state.installedVersion || currentPackage.version,
         latestVersion: null,
-        currentRevision: state.revision || "bundled",
+        currentRevision,
         latestRevision: null,
         releaseUrl: null,
         checkedAt,

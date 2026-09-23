@@ -4,7 +4,7 @@
 
 ## v1.6.0 已通過
 
-- 32 個自動化測試包含安裝、登入、安全更新、Dashboard 更新提示、固定更新執行器、MCP、Double Check、秘密掃描、多 Skill、Workflow 與 Dashboard。
+- 33 個自動化測試包含安裝、登入、安全更新、Dashboard 更新提示、固定更新執行器、更新後快取失效、MCP、Double Check、秘密掃描、多 Skill、Workflow 與 Dashboard。
 - Dashboard 啟動時與手動按鈕可檢查 GitHub `main`；遠端 commit 不同時顯示新版版本、立即更新按鈕與更新中／成功／失敗狀態。
 - 頁面更新只會執行安裝於 `下載/Agent Teams/.system/updater/install.mjs` 的固定更新器，不接受任意 repo、URL 或執行檔路徑。
 - 更新沿用固定 commit SHA、50 MB 上限、archive SHA-256、安裝後 SHA 讀回證明與失敗保留上一版機制；成功時整包替換 Plugin、Dashboard、Skills 與執行功能並重新啟動。

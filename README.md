@@ -60,7 +60,7 @@ Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位�
 
 ## 驗證狀態
 
-- 32 個自動化測試與 Codex 側欄實機穩定性檢查通過。
+- 33 個自動化測試與 Codex 側欄實機穩定性檢查通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

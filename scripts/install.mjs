@@ -438,6 +438,20 @@ export function install(options = {}) {
     fs.rmSync(copied.backup, { recursive: true, force: true });
     backupRemoved = true;
   }
+  const installedAt = new Date().toISOString();
+  const sourceCommitDate = options.sourceCommitDate || process.env.AGENT_TEAMS_SOURCE_COMMIT_DATE || releaseMetadata?.sourceCommitDate || null;
+  const archiveSha256 = options.archiveSha256 || process.env.AGENT_TEAMS_ARCHIVE_SHA256 || null;
+  if (installationHealthy) {
+    writeJson(path.join(agentTeamsRoot, ".system", "update-state.json"), {
+      repository: UPDATE_SOURCE.repository,
+      branch: UPDATE_SOURCE.branch,
+      revision: sourceRevision,
+      commitDate: sourceCommitDate,
+      archiveSha256,
+      installedVersion: copied.installedVersion,
+      updatedAt: installedAt
+    });
+  }
   const dashboard = installationHealthy
     ? launchDashboard(agentTeamsRoot, pluginRoot, runtime.node, { open: false, restart: true })
     : { started: false, error: "Plugin installation is not healthy" };
@@ -445,11 +459,11 @@ export function install(options = {}) {
     ? launchCodexEmbed(agentTeamsRoot, pluginRoot, runtime.node)
     : { started: false, error: "Dashboard is not healthy" };
   const report = {
-    installedAt: new Date().toISOString(),
+    installedAt,
     installedVersion: copied.installedVersion,
     sourceRevision,
-    sourceCommitDate: options.sourceCommitDate || process.env.AGENT_TEAMS_SOURCE_COMMIT_DATE || releaseMetadata?.sourceCommitDate || null,
-    archiveSha256: options.archiveSha256 || process.env.AGENT_TEAMS_ARCHIVE_SHA256 || null,
+    sourceCommitDate,
+    archiveSha256,
     agentTeamsRoot,
     marketplaceRoot,
     pluginRoot,
@@ -475,17 +489,6 @@ export function install(options = {}) {
     ]
   };
   fs.writeFileSync(path.join(agentTeamsRoot, "installation-report.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  if (installationHealthy) {
-    writeJson(path.join(agentTeamsRoot, ".system", "update-state.json"), {
-      repository: UPDATE_SOURCE.repository,
-      branch: UPDATE_SOURCE.branch,
-      revision: sourceRevision,
-      commitDate: report.sourceCommitDate,
-      archiveSha256: report.archiveSha256,
-      installedVersion: report.installedVersion,
-      updatedAt: report.installedAt
-    });
-  }
   return report;
 }
 
