@@ -10,6 +10,8 @@
 - 更新沿用固定 commit SHA、50 MB 上限、archive SHA-256、安裝後 SHA 讀回證明與失敗保留上一版機制；成功時整包替換 Plugin、Dashboard、Skills 與執行功能並重新啟動。
 - 發行包內含 `release-metadata.json`，第一次安裝即記錄來源 commit，避免安裝後誤判同一版為新版。
 - 實機首次按頁面更新時，更新器安全失敗並保留舊版；定位為安裝階段的一次性 `SKIP_UPDATE` 被背景服務繼承。已在 Dashboard、獨立 runner 與子更新器三層清除／覆寫該旗標，並納入後續實機重測。
+- 修正後的頁面更新實機重測通過：Dashboard 從 commit `5597442054f9` 偵測到 `4d4c630f5a5a`，API 回傳 202 後由獨立 runner 完成更新；狀態為 `succeeded`，Codex 與 Claude Code 均安裝成功，Runtime Doctor 通過，Dashboard 與 Codex sidebar Bridge 重新啟動且 `frameLoaded=true`。
+- 更新後再次查詢，安裝版本為 `1.6.0+codex.20260923192303-4d4c630f5a5a`，本機與 GitHub 完整 commit SHA 相同，`available=false`，證明不會反覆提示同一版。
 
 ## v1.6.0 已知邊界
 
