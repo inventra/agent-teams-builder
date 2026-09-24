@@ -542,7 +542,7 @@ export function install(options = {}) {
       "ChatGPT Desktop and Codex share the public plugin directory, but local CLI marketplace installation requires Codex CLI.",
       "Agent execution always uses the current Codex or Claude Code host. No Anthropic/OpenAI model API key is used by the plugin.",
       "VIXO Agents Dashboard runs only on 127.0.0.1 and uses a random local bearer token for its API.",
-      "When Codex exposes a trusted loopback CDP renderer, the launcher adds a VIXO Agents sidebar entry; otherwise it opens the Dashboard in Codex's native browser panel.",
+      "The Desktop Bridge supports both ChatGPT.app and Codex.app on macOS, plus ChatGPT/Codex packages on Windows. If an open app has no CDP renderer, it starts a managed renderer before using browser-panel fallback.",
       "Start a new Claude Code/Codex session after installation."
     ]
   };
