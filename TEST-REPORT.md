@@ -1,6 +1,13 @@
-# VIXO Agent Teams Builder 1.6.0 測試報告
+# VIXO Agent Teams Builder 1.6.1 測試報告
 
 測試日期：2026-09-24（Asia/Taipei）
+
+## v1.6.1 已通過
+
+- Claude Code 2.1.270 已登入，`agent-teams-builder@agent-teams-local` v1.6.0 安裝且啟用；全新 Claude Code Session 實際載入 3 個 Skills、連上本機 MCP，並成功呼叫一次 `agent_list`，回傳 `execution host=Claude Code, agents=2`。
+- 一鍵安裝器現在即使 GitHub 版本相同或暫時離線，也會重新檢查登入、修復每個已偵測且相容的 Codex／Claude Code Plugin 註冊，再用兩邊的 `plugin list --json` 讀回驗證安裝與啟用狀態。
+- 新增同版重跑修復測試；目前共 34 個自動化測試，33 通過，1 個需 live Codex CDP 的環境測試標記 skip。
+- Claude Code strict validator 通過；Codex 與 Claude Code 現機修復及讀回驗證均通過。
 
 ## v1.6.0 已通過
 

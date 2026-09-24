@@ -4,7 +4,7 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.1.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -18,7 +18,7 @@
 `install.command`、`Install-Agent-Builder.cmd` 與 `Install-Agent-Builder.ps1` 仍同時是安裝器與更新器。每次點擊也會檢查 `main`：
 
 - 有新 commit：下載該固定 commit 的 ZIP，更新本機 Marketplace，並讓 Claude Code／Codex 重新安裝最新版。
-- 沒有新 commit：顯示已是最新版，不重複安裝。
+- 沒有新 commit：保留目前檔案，但仍重新檢查登入、修復 Codex 與 Claude Code 的 Plugin 註冊，並從兩邊的 Plugin 清單讀回確認「已安裝且啟用」。
 - GitHub 暫時無法連線：已安裝的電腦保留目前版本，不會被舊 ZIP 降版；第一次安裝則可使用 ZIP 內附版本。
 
 因此日後只要把 Skill 或程式碼 push 到 `main`，學員可直接在 VIXO Agents 頁面更新，也能再次點擊手上的同一份安裝檔，不需要另外下載每次的 Release。更新紀錄會寫入 `下載/Agent Teams/.system/update-state.json`，包含 commit SHA、安裝版本與下載檔 SHA-256。v1.5.0 與更舊版本尚未包含頁面更新按鈕，既有使用者需要先安裝 v1.6.0 一次。
@@ -60,7 +60,7 @@ Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位�
 
 ## 驗證狀態
 
-- 33 個自動化測試與 Codex 側欄實機穩定性檢查通過。
+- 34 個自動化測試：33 通過，1 個需 live Codex CDP 的環境測試標記 skip；另有 Codex 側欄實機穩定性檢查通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { install, versionAtLeast } from "../scripts/install.mjs";
+import { install, repairHostRegistrations, versionAtLeast } from "../scripts/install.mjs";
 
 function createFakeHost(bin, name, version, log, { alreadyInstalled = false, loggedIn = true, failLogin = false } = {}) {
   const state = path.join(bin, `${name}-logged-in`);
@@ -37,6 +37,14 @@ if (name === "claude" && args[0] === "auth" && args[1] === "status") {
 if (name === "claude" && args[0] === "auth" && args[1] === "login") {
   if (failLogin) process.exit(1);
   fs.writeFileSync(state, "yes"); console.log("Browser login complete"); process.exit(0);
+}
+if (name === "codex" && args[0] === "plugin" && args[1] === "list") {
+  console.log(JSON.stringify({ installed: [{ pluginId: "agent-teams-builder@agent-teams-local", version: "1.6.1", installed: true, enabled: true }] }));
+  process.exit(0);
+}
+if (name === "claude" && args[0] === "plugin" && args[1] === "list") {
+  console.log(JSON.stringify([{ id: "agent-teams-builder@agent-teams-local", version: "1.6.1", enabled: true }]));
+  process.exit(0);
 }
 if (alreadyInstalled && name === "claude" && args[0] === "plugin" && args[1] === "install") console.log("Plugin is already installed");
 process.exit(0);
@@ -164,6 +172,40 @@ test("installer updates Claude when the plugin is already installed", () => {
     const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
     install({ sourceRoot, agentTeamsRoot: path.join(temporary, "Agent Teams"), skipNpm: true });
     assert.match(fs.readFileSync(log, "utf8"), /plugin update agent-teams-builder@agent-teams-local/);
+  } finally {
+    process.env.PATH = oldPath;
+    delete process.env.AGENT_TEAMS_SKIP_NPM;
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test("one-click rerun repairs and verifies Codex and Claude Code even when the installed release is current", () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "agent-installer-repair-test-"));
+  const bin = path.join(temporary, "bin");
+  const log = path.join(temporary, "calls.log");
+  const agentTeamsRoot = path.join(temporary, "Agent Teams");
+  fs.mkdirSync(bin);
+  createFakeHost(bin, "codex", "codex-cli 0.148.0", log);
+  createFakeHost(bin, "claude", "2.1.270 (Claude Code)", log, { alreadyInstalled: true });
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
+  process.env.AGENT_TEAMS_SKIP_NPM = "1";
+  try {
+    const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    install({ sourceRoot, agentTeamsRoot, skipNpm: true });
+    fs.writeFileSync(log, "", "utf8");
+    const repair = repairHostRegistrations({ agentTeamsRoot });
+    const calls = fs.readFileSync(log, "utf8");
+    assert.equal(repair.healthy, true);
+    assert.equal(repair.results.codex.verification.verified, true);
+    assert.equal(repair.results.claude.verification.verified, true);
+    assert.match(calls, /codex plugin marketplace add/);
+    assert.match(calls, /codex plugin list --json/);
+    assert.match(calls, /claude plugin marketplace add/);
+    assert.match(calls, /claude plugin update agent-teams-builder@agent-teams-local/);
+    assert.match(calls, /claude plugin list --json/);
+    const report = JSON.parse(fs.readFileSync(path.join(agentTeamsRoot, "installation-report.json"), "utf8"));
+    assert.equal(report.hostRegistrationCheck.healthy, true);
   } finally {
     process.env.PATH = oldPath;
     delete process.env.AGENT_TEAMS_SKIP_NPM;

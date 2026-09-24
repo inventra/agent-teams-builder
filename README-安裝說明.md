@@ -16,7 +16,7 @@
 5. 若同時找到 Claude Code 與 Codex CLI，兩邊都安裝；只找到其中一個，就安裝到該環境。
 6. 檢查宿主登入狀態。Codex 使用 `codex login status`；Claude Code 使用 `claude auth status --json`。
 7. 若尚未登入，執行 `codex login` 或 `claude auth login --claudeai`，開啟官方瀏覽器頁面讓使用者自行登入。Plugin 不讀取或保存帳號密碼。
-8. 只有登入完成且 Runtime Doctor 通過才會更新成功紀錄。
+8. 安裝後從 Codex 與 Claude Code 的 Plugin 清單讀回，確認 Agent Teams Builder 已安裝且啟用；只有宿主與 Runtime Doctor 都通過才會更新成功紀錄。
 9. 產生 `下載/Agent Teams/installation-report.json` 與 `.system/update-state.json`，記錄版本、commit SHA、下載檔 SHA-256、登入、安裝與 Doctor 結果。
 10. 啟動只監聽本機的 VIXO Agents Dashboard，並建立 `Open VIXO Agents.command` 與 `Open VIXO Agents.cmd`。
 11. Codex 有可用的本機 CDP Renderer 時，在側欄顯示 `VIXO Agents`；否則回退至 Codex 原生瀏覽器面板。
@@ -25,11 +25,11 @@
 
 從 v1.6.0 起，VIXO Agents 頁面啟動時會檢查 GitHub `main`，開啟期間每 15 分鐘重新確認。老師把 Skill 或程式碼 push 後，學員會在頁面看到新版提示，按「立即更新」即可同步 Plugin、Dashboard、Skills 與功能。頁面右上角也能手動按「檢查更新」。
 
-原本的一鍵安裝檔也仍是更新器：再次雙擊就會自動檢查、下載並安裝最新版。若沒有更新則不重裝；若 GitHub 暫時無法連線，已安裝版本會原封不動保留，避免舊 ZIP 覆蓋新版本。
+原本的一鍵安裝檔也仍是更新器：再次雙擊就會自動檢查、下載並安裝最新版。若沒有更新，不會替換 Plugin 檔案，但仍會重新檢查 Codex 與 Claude Code 的登入狀態、修復兩邊的 Plugin 註冊，並讀回確認已啟用；若 GitHub 暫時無法連線，已安裝版本會保留，同時執行相同的宿主修復，避免舊 ZIP 覆蓋新版本。
 
 安全邊界：更新來源固定為公開 repo `inventra/agent-teams-builder`，只下載 GitHub 回傳的 40 位 commit SHA 對應 archive，限制 50 MB，並記錄本機下載內容的 SHA-256。v1.5.0 與更舊版本尚未包含頁面更新按鈕，所以既有使用者必須先安裝 v1.6.0 一次；之後即可直接從頁面更新。
 
-安裝後請開新的 Session，說：「列出我的 Agent Teams」或「把目前流程建立成 Agent 小美，用途是查詢航班」。
+安裝或更新後請關閉舊 Session，再開新的 Claude Code／Codex Session，說：「列出我的 Agent Teams」或「把目前流程建立成 Agent 小美，用途是查詢航班」。Plugin 的 Skills 與 MCP 會在 Session 啟動時載入。
 
 ## 重要相容性邊界
 

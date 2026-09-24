@@ -300,7 +300,14 @@ function configureCodex(marketplaceRoot) {
   const marketOkay = addMarket.ok || /already|exists|configured/i.test(`${addMarket.stdout}\n${addMarket.stderr}`);
   if (!marketOkay) return { installed: false, error: addMarket.stderr || addMarket.error || addMarket.stdout };
   const addPlugin = commandResult(codex, ["plugin", "add", `${PLUGIN}@${MARKETPLACE}`, "--json"]);
-  return { installed: addPlugin.ok, output: addPlugin.stdout, error: addPlugin.ok ? null : addPlugin.stderr || addPlugin.error };
+  const verification = verifyCodexPlugin();
+  const installed = addPlugin.ok && verification.verified;
+  return {
+    installed,
+    output: addPlugin.stdout,
+    verification,
+    error: installed ? null : (addPlugin.stderr || addPlugin.error || verification.error || "Codex did not report the plugin as installed and enabled")
+  };
 }
 
 function configureClaude(marketplaceRoot) {
@@ -312,7 +319,47 @@ function configureClaude(marketplaceRoot) {
   if (/already installed/i.test(`${install.stdout}\n${install.stderr}`)) {
     install = commandResult(claude, ["plugin", "update", `${PLUGIN}@${MARKETPLACE}`]);
   }
-  return { installed: install.ok, output: install.stdout, error: install.ok ? null : install.stderr || install.error };
+  const verification = verifyClaudePlugin();
+  const installed = install.ok && verification.verified;
+  return {
+    installed,
+    output: install.stdout,
+    verification,
+    error: installed ? null : (install.stderr || install.error || verification.error || "Claude Code did not report the plugin as installed and enabled")
+  };
+}
+
+function parsePluginList(command, args, readEntries) {
+  const result = commandResult(command, args);
+  if (!result.ok) return { verified: false, error: result.stderr || result.error || result.stdout || "Plugin list command failed" };
+  let parsed;
+  try { parsed = JSON.parse(result.stdout); }
+  catch { return { verified: false, error: "Plugin list returned invalid JSON" }; }
+  const entries = readEntries(parsed);
+  const plugin = entries.find((item) =>
+    item?.pluginId === `${PLUGIN}@${MARKETPLACE}`
+    || item?.id === `${PLUGIN}@${MARKETPLACE}`
+  );
+  if (!plugin) return { verified: false, error: "Plugin was not found in the host plugin list" };
+  const installed = plugin.installed !== false;
+  const enabled = plugin.enabled !== false;
+  return {
+    verified: installed && enabled,
+    pluginId: plugin.pluginId || plugin.id,
+    version: plugin.version || null,
+    installed,
+    enabled,
+    installPath: plugin.installPath || plugin.source?.path || null,
+    error: installed && enabled ? null : "Plugin is present but disabled or not installed"
+  };
+}
+
+function verifyCodexPlugin() {
+  return parsePluginList(hostCommand("codex"), ["plugin", "list", "--json"], (parsed) => parsed?.installed || []);
+}
+
+function verifyClaudePlugin() {
+  return parsePluginList(hostCommand("claude"), ["plugin", "list", "--json"], (parsed) => Array.isArray(parsed) ? parsed : []);
 }
 
 function installDashboardLaunchers(agentTeamsRoot, pluginRoot, runtimeNode) {
@@ -503,6 +550,71 @@ export function install(options = {}) {
   return report;
 }
 
+export function repairHostRegistrations(options = {}) {
+  const agentTeamsRoot = path.resolve(options.agentTeamsRoot || process.env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
+  const marketplaceRoot = path.join(agentTeamsRoot, ".system", "marketplace");
+  const pluginRoot = path.join(marketplaceRoot, "plugins", PLUGIN);
+  if (!fs.existsSync(path.join(pluginRoot, "package.json"))) {
+    throw new Error("Agent Teams Builder is not installed yet; run the bundled installer first.");
+  }
+
+  const detected = {
+    desktopApps: detectDesktopApps(),
+    codexCli: available(hostCommand("codex")),
+    claudeCli: available(hostCommand("claude"))
+  };
+  if (!detected.codexCli && !detected.claudeCli) {
+    throw new Error("Neither Codex CLI nor Claude Code was found. Install at least one supported host, then run this installer again.");
+  }
+  const compatibility = {
+    node: { version: process.version, compatible: versionAtLeast(process.version, MINIMUMS.node) },
+    codex: detected.codexCli ? { version: detected.codexCli, compatible: versionAtLeast(detected.codexCli, MINIMUMS.codex) } : null,
+    claude: detected.claudeCli ? { version: detected.claudeCli, compatible: versionAtLeast(detected.claudeCli, MINIMUMS.claude) } : null
+  };
+  if (!compatibility.codex?.compatible && !compatibility.claude?.compatible) {
+    throw new Error(`Installed hosts are too old. Minimums: Codex ${MINIMUMS.codex}, Claude Code ${MINIMUMS.claude}`);
+  }
+
+  const skipLogin = options.skipLogin || process.env.AGENT_TEAMS_SKIP_LOGIN === "1";
+  const authentication = {};
+  const results = {};
+  if (compatibility.codex?.compatible) {
+    authentication.codex = ensureHostAuthentication("codex", { skipLogin });
+    results.codex = authentication.codex.loggedIn || authentication.codex.skipped
+      ? configureCodex(marketplaceRoot)
+      : { installed: false, error: "Codex login was not completed; run codex login and retry." };
+  }
+  if (compatibility.claude?.compatible) {
+    authentication.claude = ensureHostAuthentication("claude", { skipLogin });
+    results.claude = authentication.claude.loggedIn || authentication.claude.skipped
+      ? configureClaude(marketplaceRoot)
+      : { installed: false, error: "Claude Code login was not completed; run claude auth login --claudeai and retry." };
+  }
+
+  const healthy = Object.values(results).length > 0 && Object.values(results).every((item) => item.installed);
+  const checkedAt = new Date().toISOString();
+  const reportFile = path.join(agentTeamsRoot, "installation-report.json");
+  let previous = {};
+  try { previous = readJson(reportFile); } catch {}
+  const report = {
+    ...previous,
+    agentTeamsRoot,
+    marketplaceRoot,
+    pluginRoot,
+    detected,
+    compatibility,
+    authentication,
+    results,
+    hostRegistrationCheck: {
+      checkedAt,
+      healthy,
+      behavior: "Every one-click installer run repairs and verifies every detected compatible Codex CLI and Claude Code CLI host."
+    }
+  };
+  writeJson(reportFile, report);
+  return { checkedAt, healthy, detected, compatibility, authentication, results, reportFile };
+}
+
 export function extractArchive(archivePath, destination, platform = process.platform) {
   if (platform === "win32") {
     const escapedArchive = archivePath.replace(/'/g, "''");
@@ -655,11 +767,15 @@ async function main() {
       if (["up-to-date", "offline-current"].includes(update.status)) {
         const agentRoot = path.resolve(process.env.AGENT_TEAMS_INSTALL_ROOT || path.join(os.homedir(), "Downloads", "Agent Teams"));
         const installedPlugin = path.join(agentRoot, ".system", "marketplace", "plugins", PLUGIN);
+        const repair = repairHostRegistrations({ agentTeamsRoot: agentRoot });
+        console.log(`Codex 與 Claude Code Plugin 檢查：${repair.healthy ? "已安裝並啟用" : "未完成"}`);
         const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
         const runtime = installBundledRuntime(sourceRoot, agentRoot);
         const dashboard = launchDashboard(agentRoot, installedPlugin, runtime.node, { open: false });
         const embed = dashboard.started ? launchCodexEmbed(agentRoot, installedPlugin, runtime.node) : { started: false };
         if (embed.started) console.log("VIXO Agents 已在 Codex 側欄或原生面板中開啟。");
+        if (!repair.healthy) process.exitCode = 1;
+        console.log("請關閉舊的 Claude Code／Codex Session，開啟新 Session 後再調用 Agent Teams Builder。\n");
       }
       if (update.ok === false) process.exitCode = 1;
       return;
