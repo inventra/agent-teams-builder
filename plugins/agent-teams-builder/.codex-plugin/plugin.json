@@ -1,6 +1,6 @@
 {
   "name": "agent-teams-builder",
-  "version": "1.6.1",
+  "version": "1.6.2",
   "description": "Build visible VIXO employee teams with confirmed SOPs, skills, workflows, schedules, and host-native execution.",
   "author": {
     "name": "LazyOffice"

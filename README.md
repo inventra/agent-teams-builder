@@ -4,7 +4,7 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.1.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.2.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -54,13 +54,13 @@
 
 登入時只會啟動宿主官方登入命令與瀏覽器頁面。Plugin 不會讀取、保存或傳送使用者的帳號密碼。
 
-Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。v1.6.0 延續 Dashi Taskboard 的桌面 Bridge 做法，在可用的 Codex CDP Renderer 中加入 `VIXO Agents` 側欄頁面，並使用 Codex 原生專案路由建立任務；若當前環境無法安全注入，會回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
+Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。桌面 Bridge 同時支援 `/Applications/ChatGPT.app`（內含 Codex 的統一桌面程式）與 `/Applications/Codex.app`。它會優先連接已有 CDP 的主畫面；若 App 已開啟但沒有 CDP，會啟動受管理的桌面視窗後加入 `VIXO Agents` 側欄。只有兩種 App 都無法建立安全 Renderer 時，才回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
 
 詳情請看 [安裝說明](README-安裝說明.md) 與 [測試報告](TEST-REPORT.md)。
 
 ## 驗證狀態
 
-- 34 個自動化測試：33 通過，1 個需 live Codex CDP 的環境測試標記 skip；另有 Codex 側欄實機穩定性檢查通過。
+- 36 個自動化測試：35 通過，1 個需 live Codex CDP 的環境測試標記 skip；另有 Codex 側欄實機穩定性檢查通過。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

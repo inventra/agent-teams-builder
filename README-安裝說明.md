@@ -19,7 +19,7 @@
 8. 安裝後從 Codex 與 Claude Code 的 Plugin 清單讀回，確認 Agent Teams Builder 已安裝且啟用；只有宿主與 Runtime Doctor 都通過才會更新成功紀錄。
 9. 產生 `下載/Agent Teams/installation-report.json` 與 `.system/update-state.json`，記錄版本、commit SHA、下載檔 SHA-256、登入、安裝與 Doctor 結果。
 10. 啟動只監聽本機的 VIXO Agents Dashboard，並建立 `Open VIXO Agents.command` 與 `Open VIXO Agents.cmd`。
-11. Codex 有可用的本機 CDP Renderer 時，在側欄顯示 `VIXO Agents`；否則回退至 Codex 原生瀏覽器面板。
+11. 桌面 Bridge 同時支援 `ChatGPT.app` 與 `Codex.app`。若現有 Codex 主畫面沒有 CDP，安裝器會啟動受管理的桌面視窗再加入 `VIXO Agents`；只有兩者都無法建立安全 Renderer 時才回退至原生瀏覽器面板。
 
 ## 更新
 
@@ -37,7 +37,7 @@
 - ChatGPT Desktop／Codex 共用公開 Plugin 目錄，但本機 Marketplace 的自動安裝需要 Codex CLI；只有 ChatGPT Desktop、沒有 Codex CLI 時，安裝器會清楚報告未安裝，不會假裝成功。
 - Agent 永遠在目前宿主執行：Codex Session 由 Codex 執行，Claude Code Session 由 Claude Code 執行。本 Plugin 不使用 Anthropic API、OpenAI API 或獨立 Agent SDK。
 - Dashboard Play/排程使用已登入的 Codex 或 Claude Code CLI。手動模式可在等待輸入或核准後續跑同一個 Session；自動核准只適用於 Workflow 內建節點，不繞過宿主安全權限。Dashboard 必須保持執行，排程才會如期觸發。
-- Codex 正式 Plugin manifest 目前無法宣告自訂左側頁面。側欄是參考 Dashi Taskboard 的桌面 CDP/DOM Bridge；若不可用，會自動回退至原生瀏覽器面板。
+- Codex 正式 Plugin manifest 目前無法宣告自訂左側頁面。側欄是參考 Dashi Taskboard 的桌面 CDP/DOM Bridge，macOS 同時偵測 `/Applications/ChatGPT.app` 與 `/Applications/Codex.app`，Windows 同時偵測 ChatGPT／Codex 套件；若兩者皆不可用，才會回退至原生瀏覽器面板。
 - macOS App 與 Windows EXE 目前為未簽章發行檔，Gatekeeper 或 SmartScreen 可能要求使用者確認。
 - 本機 stdio MCP 適用 Claude Code 與 Codex。要公開提交到 ChatGPT Plugin Directory，MCP Server 需另行部署成穩定的 HTTPS 服務並完成官方審核；這個 ZIP 不會假裝已完成公開上架。
 

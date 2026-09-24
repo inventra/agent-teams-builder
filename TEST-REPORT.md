@@ -1,6 +1,13 @@
-# VIXO Agent Teams Builder 1.6.1 測試報告
+# VIXO Agent Teams Builder 1.6.2 測試報告
 
 測試日期：2026-09-24（Asia/Taipei）
+
+## v1.6.2 已通過
+
+- 修正 `ChatGPT.app` 或 `Codex.app` 已經開啟、但沒有帶 CDP 啟動參數時，Bridge 過早回退成 `codex-browser-panel` 的問題；現在會啟動受管理的桌面 Renderer，再注入 `VIXO Agents` 側欄。
+- macOS 同時支援系統與使用者 Applications 內的 `ChatGPT.app`、`Codex.app`，兩者並存時優先選擇正在執行的 App；Windows 保留 ChatGPT／Codex 雙套件偵測。
+- 新增雙 App 候選排序與「已開啟但無 CDP 仍啟動 Bridge」測試。
+- 目前共 36 個自動化測試，35 通過，1 個需 live Codex CDP 的環境測試標記 skip。
 
 ## v1.6.1 已通過
 

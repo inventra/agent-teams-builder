@@ -7,6 +7,7 @@ import {
   buildInjectionSource,
   isCodexRendererTarget,
   isLoopbackDashboardUrl,
+  macCodexAppCandidates,
   parseDebuggingPorts,
 } from "../src/codex-embed.mjs";
 
@@ -24,6 +25,34 @@ test("only the primary Codex app renderer is injectable", () => {
   assert.equal(isCodexRendererTarget({ ...base, url: "app://-/index.html?initialRoute=%2Fdetached-window" }), false);
   assert.equal(isCodexRendererTarget({ ...base, url: "https://example.com" }), false);
   assert.equal(isCodexRendererTarget({ ...base, type: "webview", url: "app://-/index.html" }), false);
+});
+
+test("macOS Bridge supports both ChatGPT.app and Codex.app and prefers the one already running", () => {
+  const home = "/Users/example";
+  const installed = new Set([
+    "/Applications/ChatGPT.app",
+    "/Applications/Codex.app",
+  ]);
+  const listing = "123 /Applications/Codex.app/Contents/MacOS/Codex --some-flag";
+  assert.deepEqual(
+    macCodexAppCandidates({ home, exists: (candidate) => installed.has(candidate), listing }),
+    ["/Applications/Codex.app", "/Applications/ChatGPT.app"],
+  );
+  assert.deepEqual(
+    macCodexAppCandidates({
+      home,
+      exists: (candidate) => candidate === "/Applications/ChatGPT.app",
+      listing: "456 /Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
+    }),
+    ["/Applications/ChatGPT.app"],
+  );
+});
+
+test("Bridge starts a managed desktop renderer when an open app has no CDP port", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "src", "codex-embed.mjs"), "utf8");
+  assert.match(source, /if \(!port && \["darwin", "win32"\]\.includes\(process\.platform\)\)/);
+  assert.doesNotMatch(source, /!codexRunning\(listing\)/);
 });
 
 test("dashboard embedding accepts loopback only and quotes injected values", () => {

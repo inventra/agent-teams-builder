@@ -118,10 +118,6 @@ function processListing() {
     : "";
 }
 
-function codexRunning(listing = processListing()) {
-  return /(?:ChatGPT|Codex)(?:\.app|\.exe|\s)/i.test(listing);
-}
-
 async function targetsForPort(port) {
   try {
     const targets = await fetchJson(`http://127.0.0.1:${port}/json/list`);
@@ -132,8 +128,13 @@ async function targetsForPort(port) {
 }
 
 async function discoverDebuggingPort(explicitPort = null) {
+  if (explicitPort) {
+    const requested = Number(explicitPort);
+    return Number.isInteger(requested) && requested > 0 && (await targetsForPort(requested)).length > 0
+      ? requested
+      : null;
+  }
   const candidates = [];
-  if (explicitPort) candidates.push(Number(explicitPort));
   if (process.env.VIXO_CODEX_CDP_PORT) candidates.push(Number(process.env.VIXO_CODEX_CDP_PORT));
   candidates.push(...parseDebuggingPorts(processListing()), 9231, 9229);
   for (const port of [...new Set(candidates.filter((value) => Number.isInteger(value) && value > 0))]) {
@@ -142,35 +143,52 @@ async function discoverDebuggingPort(explicitPort = null) {
   return null;
 }
 
-function macCodexApp() {
+export function macCodexAppCandidates({
+  home = os.homedir(),
+  exists = fs.existsSync,
+  listing = "",
+} = {}) {
   const candidates = [
     "/Applications/ChatGPT.app",
-    path.join(os.homedir(), "Applications", "ChatGPT.app"),
+    path.join(home, "Applications", "ChatGPT.app"),
     "/Applications/Codex.app",
-    path.join(os.homedir(), "Applications", "Codex.app"),
+    path.join(home, "Applications", "Codex.app"),
   ];
-  return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  const available = [...new Set(candidates)].filter((candidate) => exists(candidate));
+  const running = (candidate) => {
+    const executable = path.join(candidate, "Contents", "MacOS", path.basename(candidate, ".app"));
+    return String(listing || "").split("\n").some((line) => {
+      const command = line.replace(/^\s*\d+\s+/, "");
+      return command === executable || command.startsWith(`${executable} `);
+    });
+  };
+  return available
+    .map((candidate, index) => ({ candidate, index, running: running(candidate) }))
+    .sort((left, right) => Number(right.running) - Number(left.running) || left.index - right.index)
+    .map((entry) => entry.candidate);
 }
 
-async function launchManagedMacCodex(port) {
-  const app = macCodexApp();
-  if (!app) return false;
+async function launchManagedMacCodex(port, listing = processListing()) {
+  const apps = macCodexAppCandidates({ listing });
+  if (apps.length === 0) return null;
   const profile = path.join(systemRoot(), "codex-profile");
   fs.mkdirSync(profile, { recursive: true });
-  const result = spawnSync("/usr/bin/open", [
-    "-n", "-a", app, "--args",
-    `--user-data-dir=${profile}`,
-    "--remote-debugging-address=127.0.0.1",
-    `--remote-debugging-port=${port}`,
-    `--remote-allow-origins=http://127.0.0.1:${port}`,
-  ], { encoding: "utf8" });
-  if (result.status !== 0) return false;
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    if ((await targetsForPort(port)).length > 0) return true;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+  for (const app of apps) {
+    const result = spawnSync("/usr/bin/open", [
+      "-n", "-a", app, "--args",
+      `--user-data-dir=${profile}`,
+      "--remote-debugging-address=127.0.0.1",
+      `--remote-debugging-port=${port}`,
+      `--remote-allow-origins=http://127.0.0.1:${port}`,
+    ], { encoding: "utf8" });
+    if (result.status !== 0) continue;
+    const deadline = Date.now() + 30_000;
+    while (Date.now() < deadline) {
+      if ((await targetsForPort(port)).length > 0) return { app, port };
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
   }
-  return false;
+  return null;
 }
 
 function launchManagedWindowsCodex(port) {
@@ -239,13 +257,15 @@ $pid = [VixoPackagedAppActivator]::Activate($appUserModelId, $arguments)
 }
 
 async function launchManagedCodex(port) {
-  let launched = false;
+  let launched = null;
   if (process.platform === "darwin") launched = await launchManagedMacCodex(port);
-  else if (process.platform === "win32") launched = launchManagedWindowsCodex(port);
+  else if (process.platform === "win32" && launchManagedWindowsCodex(port)) {
+    launched = { app: "ChatGPT-or-Codex", port };
+  }
   if (!launched) return false;
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
-    if ((await targetsForPort(port)).length > 0) return true;
+    if ((await targetsForPort(port)).length > 0) return launched;
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   return false;
@@ -471,7 +491,7 @@ export async function startEmbed({ explicitPort = null, open = true } = {}) {
     env: { ...process.env, AGENT_TEAMS_HOME: ensureAgentTeamsRoot() },
   });
   child.unref();
-  const deadline = Date.now() + 15_000;
+  const deadline = Date.now() + 45_000;
   let lastStatus = null;
   while (Date.now() < deadline) {
     await new Promise((resolve) => setTimeout(resolve, 200));
@@ -501,11 +521,15 @@ function authorized(request, token) {
 
 async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
   const dashboard = await ensureDashboard();
-  const listing = processListing();
   let port = await discoverDebuggingPort(explicitPort);
-  if (!port && ["darwin", "win32"].includes(process.platform) && !codexRunning(listing)) {
+  let launchedDesktopApp = null;
+  if (!port && ["darwin", "win32"].includes(process.platform)) {
     const requested = explicitPort || Number(process.env.VIXO_CODEX_CDP_PORT || 9232);
-    if (await launchManagedCodex(requested)) port = requested;
+    const launched = await launchManagedCodex(requested);
+    if (launched) {
+      port = requested;
+      launchedDesktopApp = launched.app;
+    }
   }
   if (!port) {
     const opened = openCodexBrowserPanel(dashboard.url);
@@ -606,6 +630,7 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
       pageVisible: statuses.some((item) => item.pageVisible),
       frameLoaded: statuses.some((item) => item.frameLoaded),
       cdpPort: port,
+      desktopApp: launchedDesktopApp || "existing-cdp-renderer",
       targets: statuses,
     }));
   });
@@ -618,6 +643,7 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
     pid: process.pid,
     mode: "codex-sidebar",
     cdpPort: port,
+    desktopApp: launchedDesktopApp,
     controlPort: address.port,
     controlToken,
     sourceHash,

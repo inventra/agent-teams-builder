@@ -51,7 +51,7 @@ Downloads/Agent Teams/
 
 Codex 的正式 Plugin manifest 目前可宣告 Skills、MCP tools、Apps connector 與展示資訊，但沒有「自訂左側頁面」的正式欄位。Dashi Taskboard 使用的方式是本機服務加上 CDP 畫面注入，並非 Codex Plugin API。
 
-v1.6.0 已將固定左側按鈕實作為「Codex Desktop Bridge」，使用 loopback CDP、document-start 注入與 sandbox iframe，並在無法注入時回退到 Codex 原生瀏覽器面板。Play 時由 Bridge 切換使用者選擇的 Codex 專案，建立原生 Session，再回讀 `thread-project-assignments` 確認任務已綁定正確專案。此 Bridge 與 Agent 核心資料分離，並有 Taskboard 共存順序測試。
+固定左側按鈕實作為「Codex Desktop Bridge」，使用 loopback CDP、document-start 注入與 sandbox iframe。v1.6.2 同時支援 `ChatGPT.app` 與 `Codex.app`，優先選擇正在執行的 App；當 App 已開啟但沒有 CDP 時，Bridge 仍會啟動受管理的 Renderer，而不會直接降級。兩種 App 都無法安全注入時才回退到 Codex 原生瀏覽器面板。Play 時由 Bridge 切換使用者選擇的 Codex 專案，建立原生 Session，再回讀 `thread-project-assignments` 確認任務已綁定正確專案。此 Bridge 與 Agent 核心資料分離，並有 Taskboard 共存順序測試。
 
 Dashboard 另有固定 GitHub `main` 的更新檢查器。它只比對安裝狀態與遠端 commit，實際更新由獨立 runner 呼叫安裝於 `.system/updater/install.mjs` 的安全更新器；更新器下載固定 SHA archive、驗證大小與安裝結果，再整包替換 Marketplace 並重啟 Dashboard/Bridge。
 
