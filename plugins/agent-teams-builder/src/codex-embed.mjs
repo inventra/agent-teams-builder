@@ -156,7 +156,7 @@ export function macCodexAppCandidates({
   ];
   const available = [...new Set(candidates)].filter((candidate) => exists(candidate));
   const running = (candidate) => {
-    const executable = path.join(candidate, "Contents", "MacOS", path.basename(candidate, ".app"));
+    const executable = path.posix.join(candidate, "Contents", "MacOS", path.posix.basename(candidate, ".app"));
     return String(listing || "").split("\n").some((line) => {
       const command = line.replace(/^\s*\d+\s+/, "");
       return command === executable || command.startsWith(`${executable} `);
