@@ -112,8 +112,20 @@ for (const [blockedRequest, stopMethod] of [
       assert.equal(response.ok, true);
       await response.json();
     }
-    await poll(() => child.exitCode !== null, 1800);
-    assert.equal(child.exitCode, 0);
+    // Node documents Windows SIGTERM as unconditional termination, not a JS
+    // signal-handler shutdown: it may report signalCode or a nonzero exitCode.
+    // https://nodejs.org/docs/latest-v22.x/api/process.html#signal-events
+    await poll(() => child.exitCode !== null || child.signalCode !== null, 1800);
+    if (process.platform === "win32" && stopMethod !== "api") {
+      assert.ok(child.signalCode === "SIGTERM" || child.exitCode === 1,
+        "Windows force-stop must actually terminate the exact test daemon");
+      if (stopMethod === "signal") {
+        // A killed Windows process cannot run its cleanup handler. Verify the
+        // real controller safely removes only the dead daemon's stale record.
+        process.env.AGENT_TEAMS_HOME = temporary;
+        assert.equal((await stopEmbed({ timeoutMs: 1800 })).stopped, true);
+      }
+    } else assert.equal(child.exitCode, 0, "API/POSIX shutdown must remain graceful");
     assert.equal(fs.existsSync(path.join(system, "codex-embed-runtime.json")), false);
   } finally {
     await cleanupChild(child);

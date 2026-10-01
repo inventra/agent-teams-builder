@@ -12,6 +12,7 @@
 - 7 組合成雙側欄點擊回歸。停止回歸使用合成 HTTP／WebSocket peers 與精確建立的子程序，不操作使用者的 Codex App。
 - 正式庫在獨立浏览器只讀驗證，員工／Skills／Workflows 與像素身分一致，沒有 page error；不執行正式員工工作、不寫入正式偏好。
 - 发行包僅取 Git 已追蹤來源，不包含本機截圖、私人工作輸出、員工資料或本機專用修補腳本；保留舊版發行檔。
+- 發布前 macOS CI 已通過；首輪 Windows CI 找出停止測試把強制終止誤當 exitCode=0 的平台假設。回歸改為驗證 signalCode／Windows 強制退出、精確子程序真的結束，以及正式 controller 安全清理死程序紀錄；API／POSIX 正常退出仍嚴格要求 0，沒有跳過 Windows 停止測試。
 
 ### v1.7.0 驗證邊界
 
