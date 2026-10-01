@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
+if (!/^\d+\.\d+\.\d+$/.test(version)) throw new Error("Invalid release version");
 const releaseName = `Agent-Teams-Builder-v${version}`;
 const outputRoot = path.join(root, "output", "release");
 const stage = path.join(outputRoot, releaseName);
@@ -30,7 +31,22 @@ function run(command, args, options = {}) {
 
 function copy(source, destination, options = {}) {
   fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.cpSync(source, destination, { recursive: true, ...options });
+  fs.cpSync(source, destination, { recursive: true, ...options, filter: (file) => {
+    const relative = path.relative(root, file).split(path.sep).join("/");
+    // Public archives must not sweep in local screenshots, employee exports,
+    // credentials or repair notes. Downloads in our own temporary staging area
+    // are runtime distributions, not repository source files.
+    const tracked = relative === "" || relative.startsWith("../") || path.isAbsolute(relative) ||
+      trackedPaths.has(relative) || trackedDirectories.has(relative);
+    return tracked && (!options.filter || options.filter(file));
+  } });
+}
+
+const trackedPaths = new Set(run("git", ["ls-files", "-z"], { cwd: root }).stdout.split("\0").filter(Boolean));
+const trackedDirectories = new Set();
+for (const file of trackedPaths) {
+  let parent = path.posix.dirname(file);
+  while (parent !== ".") { trackedDirectories.add(parent); parent = path.posix.dirname(parent); }
 }
 
 async function download(url, destination) {
@@ -91,7 +107,9 @@ function createMacApp() {
 `, "utf8");
 }
 
-fs.rmSync(outputRoot, { recursive: true, force: true });
+// Preserve every older release. If rebuilding this version, retain its staging
+// folder as a recoverable backup rather than recursively erasing output/release.
+if (fs.existsSync(stage)) fs.renameSync(stage, stage + ".backup-" + Date.now());
 fs.mkdirSync(stage, { recursive: true });
 for (const relative of [
   ".agents",

@@ -67,6 +67,24 @@ function pidAlive(pid) {
   catch { return false; }
 }
 
+function isOwnBridgeProcess(pid) {
+  if (!Number.isInteger(pid) || pid < 1) return false;
+  const result = process.platform === "win32"
+    ? spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command",
+      `Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`],
+    { encoding: "utf8", windowsHide: true, maxBuffer: 64 * 1024 })
+    : spawnSync("/bin/ps", ["-ww", "-p", String(pid), "-o", "command="],
+      { encoding: "utf8", maxBuffer: 64 * 1024 });
+  if (result.status !== 0) return false;
+  let command = result.stdout.replace(/"/g, "").trim();
+  let expected = `${process.execPath} ${embedScript} daemon`;
+  if (process.platform === "win32") {
+    command = command.toLowerCase();
+    expected = expected.toLowerCase();
+  }
+  return command === expected || command.startsWith(`${expected} `);
+}
+
 async function fetchJson(url, timeout = 1500) {
   const response = await fetch(url, { signal: AbortSignal.timeout(timeout), cache: "no-store" });
   if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -342,7 +360,8 @@ class CdpConnection {
   }
 
   close() {
-    try { this.socket?.close(); } catch {}
+    // Do not let an unresponsive peer's close handshake hold Node alive.
+    try { this.socket?.terminate(); } catch {}
     this.finish(new Error("CDP connection closed"));
   }
 }
@@ -402,9 +421,26 @@ async function loadDashboardFrame(connection, frameName, dashboardUrl) {
   throw new Error("Timed out waiting for the isolated VIXO Agents frame");
 }
 
-async function injectTarget(target, dashboardUrl, source, sourceHash, shouldOpen = false) {
-  const connection = await new CdpConnection(target.webSocketDebuggerUrl).connect();
+export async function reconcileDashboardFrame(record, dashboardUrl, {
+  readStatus = injectionStatus,
+  loadFrame = loadDashboardFrame,
+} = {}) {
+  const status = await readStatus(record.connection);
+  record.status = status;
+  if (status?.pageVisible && !status.frameLoaded && status.frameName
+    && record.loadedFrameName !== status.frameName) {
+    await loadFrame(record.connection, status.frameName, dashboardUrl);
+    record.loadedFrameName = status.frameName;
+    return true;
+  }
+  return false;
+}
+
+async function injectTarget(target, dashboardUrl, source, sourceHash, shouldOpen = false, onConnection = null) {
+  const connection = new CdpConnection(target.webSocketDebuggerUrl);
+  onConnection?.(connection);
   try {
+    await connection.connect();
     await connection.send("Page.enable");
     await connection.send("Runtime.enable");
     await connection.send("Page.setBypassCSP", { enabled: true });
@@ -432,7 +468,7 @@ async function injectTarget(target, dashboardUrl, source, sourceHash, shouldOpen
         await loadDashboardFrame(connection, status.frameName, dashboardUrl);
         loadedFrameName = status.frameName;
       }
-      if (status?.entryMounted && (!shouldOpen || (status.pageVisible && status.frameLoaded))) break;
+      if ((status?.entryVisible ?? status?.entryMounted) && (!shouldOpen || (status.pageVisible && status.frameLoaded))) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     return { connection, status };
@@ -442,14 +478,30 @@ async function injectTarget(target, dashboardUrl, source, sourceHash, shouldOpen
   }
 }
 
-function sourceBundle() {
-  const source = fs.readFileSync(injectionFile, "utf8");
-  const sourceHash = crypto.createHash("sha256").update(source).digest("hex");
-  return { source, sourceHash };
+export function sourceBundle({ injectionPath = injectionFile, webDirectory = path.join(packageRoot, "web") } = {}) {
+  const source = fs.readFileSync(injectionPath, "utf8");
+  // A web-only patch must replace an already-loaded iframe too. Otherwise
+  // the new daemon sees the same injector hash and keeps the old module state.
+  const fingerprint = crypto.createHash("sha256").update(source).update("\0");
+  const assets = fs.readdirSync(webDirectory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.(?:html|css|js|json)$/.test(entry.name))
+    .map((entry) => entry.name).sort();
+  for (const name of assets) fingerprint.update(name).update("\0")
+    .update(fs.readFileSync(path.join(webDirectory, name))).update("\0");
+  const sourceHash = fingerprint.digest("hex");
+  const bridgeSourceHash = crypto.createHash("sha256").update(fs.readFileSync(fileURLToPath(import.meta.url))).digest("hex");
+  return { source, sourceHash, bridgeSourceHash };
 }
 
-async function requestRuntime(action) {
-  const runtime = readJson(runtimeFile());
+export function embedRuntimeNeedsRefresh(runtime, { sourceHash, bridgeSourceHash, dashboardUrl } = {}) {
+  return Boolean(runtime && runtime.mode === "codex-sidebar" && (
+    runtime.sourceHash !== sourceHash
+    || (bridgeSourceHash && runtime.bridgeSourceHash !== bridgeSourceHash)
+    || (dashboardUrl && runtime.dashboardUrl !== dashboardUrl)
+  ));
+}
+
+async function requestRuntime(action, runtime = readJson(runtimeFile())) {
   if (!runtime?.controlPort || !runtime?.controlToken || !pidAlive(runtime.pid)) return null;
   try {
     const response = await fetch(`http://127.0.0.1:${runtime.controlPort}/${action}`, {
@@ -464,18 +516,41 @@ async function requestRuntime(action) {
   }
 }
 
-export async function stopEmbed() {
-  const stopped = await requestRuntime("stop");
-  if (stopped) return stopped;
+export async function stopEmbed({ timeoutMs = 8000 } = {}) {
   const runtime = readJson(runtimeFile());
-  if (runtime?.pid && pidAlive(runtime.pid)) {
+  const stopped = await requestRuntime("stop", runtime);
+  if (!stopped && runtime?.pid && pidAlive(runtime.pid)) {
+    const current = readJson(runtimeFile());
+    if (current?.pid !== runtime.pid || current?.controlToken !== runtime.controlToken || !isOwnBridgeProcess(runtime.pid)) {
+      throw new Error("Cannot verify the recorded PID is this VIXO bridge; refusing to signal it");
+    }
     try { process.kill(runtime.pid, "SIGTERM"); } catch {}
   }
-  try { fs.unlinkSync(runtimeFile()); } catch {}
-  return { stopped: true, forced: Boolean(runtime?.pid) };
+  // The control response means "accepted", not that Node has released its
+  // sockets and exited. Verify termination before allowing a replacement.
+  const deadline = Date.now() + timeoutMs;
+  while (pidAlive(runtime?.pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  if (pidAlive(runtime?.pid)) throw new Error("Previous VIXO bridge did not stop; refusing a duplicate daemon");
+  // Do not remove a newer daemon's ownership record during concurrent opens.
+  if (readJson(runtimeFile())?.pid === runtime?.pid) {
+    try { fs.unlinkSync(runtimeFile()); } catch {}
+  }
+  return { ...stopped, stopped: true, forced: !stopped && Boolean(runtime?.pid) };
 }
 
 export async function startEmbed({ explicitPort = null, open = true } = {}) {
+  // A launcher click must pick up patched code, not merely ask the old daemon
+  // to open its cached injection. Only this VIXO daemon is stopped.
+  const { sourceHash, bridgeSourceHash } = sourceBundle();
+  const previousRuntime = readJson(runtimeFile());
+  const dashboard = await dashboardRuntime();
+  if (pidAlive(previousRuntime?.pid) && embedRuntimeNeedsRefresh(previousRuntime, {
+    sourceHash, bridgeSourceHash, dashboardUrl: dashboard?.url,
+  })) {
+    await stopEmbed();
+  }
   const existing = await requestRuntime(open ? "open" : "status");
   if (existing) return existing;
   const logFile = path.join(systemRoot(), "codex-embed.log");
@@ -544,31 +619,42 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
     return fallback;
   }
 
-  const { source, sourceHash } = sourceBundle();
+  const { source, sourceHash, bridgeSourceHash } = sourceBundle();
   const connections = new Map();
+  const liveConnections = new Set();
   let openPending = shouldOpen;
   let stopping = false;
   const controlToken = crypto.randomBytes(32).toString("hex");
 
   async function reconcile() {
+    if (stopping) return;
     const targets = await targetsForPort(port);
+    if (stopping) return;
     const liveIds = new Set(targets.map((target) => target.id));
     for (const [id, record] of connections) {
       if (liveIds.has(id) && !record.connection.closed) continue;
       record.connection.close();
+      liveConnections.delete(record.connection);
       connections.delete(id);
     }
     for (const target of targets) {
+      if (stopping) return;
       if (connections.has(target.id)) continue;
+      let connecting = null;
       try {
-        const record = await injectTarget(target, dashboard.url, source, sourceHash, openPending);
+        const record = await injectTarget(target, dashboard.url, source, sourceHash, openPending, (connection) => {
+          connecting = connection;
+          liveConnections.add(connection);
+        });
         record.loadedFrameName = record.status?.frameLoaded ? record.status?.frameName : "";
         connections.set(target.id, record);
         if (record.status?.pageVisible) openPending = false;
       } catch (error) {
-        fs.appendFileSync(path.join(systemRoot(), "codex-embed.log"), `Injection failed for ${target.id}: ${error.message}\n`);
+        if (connecting) liveConnections.delete(connecting);
+        if (!stopping) fs.appendFileSync(path.join(systemRoot(), "codex-embed.log"), `Injection failed for ${target.id}: ${error.message}\n`);
       }
     }
+    if (stopping) return;
     if (openPending) {
       for (const record of connections.values()) {
         try {
@@ -584,19 +670,19 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
     }
     for (const record of connections.values()) {
       try {
-        const status = await injectionStatus(record.connection);
-        record.status = status;
-        if (
-          status?.pageVisible
-          && !status.frameLoaded
-          && status.frameName
-          && record.loadedFrameName !== status.frameName
-        ) {
-          record.loadedFrameName = status.frameName;
-          await loadDashboardFrame(record.connection, status.frameName, dashboard.url);
-        }
+        await reconcileDashboardFrame(record, dashboard.url);
       } catch {}
     }
+  }
+
+  function beginShutdown() {
+    if (stopping) return;
+    stopping = true;
+    // Includes connections still inside injectTarget, not just initialized
+    // records. Closing them rejects pending awaits so reconciliation can end.
+    for (const connection of liveConnections) connection.close();
+    server.close();
+    server.closeIdleConnections?.();
   }
 
   const server = http.createServer(async (request, response) => {
@@ -609,10 +695,9 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
       openPending = true;
       await reconcile();
     } else if (request.method === "POST" && url.pathname === "/stop") {
-      stopping = true;
-      response.writeHead(200, { "content-type": "application/json" });
+      response.writeHead(200, { "content-type": "application/json", connection: "close" });
       response.end(JSON.stringify({ stopped: true }));
-      server.close();
+      beginShutdown();
       return;
     } else if (!(request.method === "POST" && url.pathname === "/status")) {
       response.writeHead(404).end();
@@ -626,7 +711,7 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
     response.end(JSON.stringify({
       running: true,
       mode: "codex-sidebar",
-      sidebarInjected: statuses.some((item) => item.entryMounted),
+      sidebarInjected: statuses.some((item) => item.entryVisible ?? item.entryMounted),
       pageVisible: statuses.some((item) => item.pageVisible),
       frameLoaded: statuses.some((item) => item.frameLoaded),
       cdpPort: port,
@@ -647,18 +732,22 @@ async function runDaemon({ explicitPort = null, shouldOpen = false } = {}) {
     controlPort: address.port,
     controlToken,
     sourceHash,
+    bridgeSourceHash,
     dashboardUrl: dashboard.url,
     startedAt: new Date().toISOString(),
   });
 
-  process.on("SIGTERM", () => { stopping = true; server.close(); });
-  process.on("SIGINT", () => { stopping = true; server.close(); });
+  process.on("SIGTERM", beginShutdown);
+  process.on("SIGINT", beginShutdown);
   while (!stopping) {
     await reconcile();
+    if (stopping) break;
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
-  for (const record of connections.values()) record.connection.close();
-  try { fs.unlinkSync(runtimeFile()); } catch {}
+  for (const connection of liveConnections) connection.close();
+  if (readJson(runtimeFile())?.pid === process.pid) {
+    try { fs.unlinkSync(runtimeFile()); } catch {}
+  }
   return { stopped: true };
 }
 
@@ -673,7 +762,7 @@ export async function runOnce({ explicitPort = null, open = true } = {}) {
   const result = {
     mode: "codex-sidebar",
     cdpPort: port,
-    sidebarInjected: records.some((record) => record.status?.entryMounted),
+    sidebarInjected: records.some((record) => record.status?.entryVisible ?? record.status?.entryMounted),
     pageVisible: records.some((record) => record.status?.pageVisible),
     frameLoaded: records.some((record) => record.status?.frameLoaded),
     targets: records.map((record) => record.status),

@@ -37,14 +37,16 @@ test("Taskboard and VIXO sidebar entries keep a stable order", {
   const result = await evaluate(target, `new Promise((resolve) => {
     const vixo = document.getElementById("vixo-agents-sidebar-entry");
     const taskboard = document.getElementById("codex-taskboard-entry");
-    if (!vixo || !taskboard || vixo.parentElement !== taskboard.parentElement) {
-      resolve({ error: "sidebar entries missing or have different parents" });
+    const projects = document.querySelector('[data-app-navigation-rail] [data-sidebar-destination="builtin:projects"]');
+    const anchor = taskboard?.parentElement === vixo?.parentElement ? taskboard : projects;
+    if (!vixo || !anchor || vixo.parentElement !== anchor.parentElement) {
+      resolve({ error: "VIXO entry or compatible sidebar anchor is missing" });
       return;
     }
     const parent = vixo.parentElement;
     const order = () => Array.from(parent.children)
-      .filter((node) => node === taskboard || node === vixo)
-      .map((node) => node.id)
+      .filter((node) => node === anchor || node === vixo)
+      .map((node) => node === vixo ? "vixo" : (node === taskboard ? "taskboard" : "projects"))
       .join(">");
     const orders = [order()];
     const observer = new MutationObserver(() => orders.push(order()));
@@ -60,6 +62,7 @@ test("Taskboard and VIXO sidebar entries keep a stable order", {
   })`);
 
   assert.equal(result?.error, undefined, result?.error);
-  assert.deepEqual([...new Set(result.orders)], ["codex-taskboard-entry>vixo-agents-sidebar-entry"]);
+  assert.deepEqual([...new Set(result.orders)], [result.orders[0]]);
+  assert.ok(["taskboard>vixo", "projects>vixo"].includes(result.orders[0]), result.orders[0]);
   assert.equal(result.transitions, 0, `sidebar order changed ${result.transitions} times`);
 });

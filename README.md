@@ -4,7 +4,7 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.6.2.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.7.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -38,6 +38,19 @@
 - Play 可選擇「遇核准節點暫停」或「本次自動核准」；等待資料與等待核准會分開顯示，並可在 Dashboard 原 Session 續跑。
 - Codex 仍可改選「背景 CLI 執行」；Claude Code 與排程使用已登入的宿主 CLI，不另外調用模型 API。
 
+## v1.7.0：Docs 工作台
+
+VIXO 預設開啟新的 Docs 工作台，保留原本的員工總覽及每位員工入口：
+
+- 經典首頁九張預設卡片與像素辦公室，共用實際 Agent、Skills、Workflows 與執行紀錄。
+- 今天／本週／本月統計讀取完整紀錄，不只計最近 30 筆；原生 Codex 任務建立不會被計為完成。
+- 卡片新增、排序、縮放、換色，明暗主題與常用流程偏好持久保存；圖示使用本機 SVG。
+- 從首頁或像素員工詳情啟動 Play／每日排程，查看結果、補資料、核准／拒絕及開啟 Codex 任務。
+- 修復新式側欄定位、document-start 圖示遺失、重掛 iframe 空白頁、舊 bridge 停止等待及前端版本快取問題。
+- 企業信件、行事曆、ERP／BI 等來源尚未串接時明確顯示「未串接」，不使用示範數字。員工清單來自使用者自己的資料，不附送範例員工。
+
+使用指南與完整後續範圍見 [Docs 工作台說明](docs/VIXO-DOCS-WORKBENCH.md) 與 [173 節點功能對照表](docs/VIXO-Docs-功能對照表.md)。LazyOffice 的員工、Plugin、偏好與「小懶」規則仍屬另一套系統。
+
 安裝完會自動開啟 Dashboard。之後可雙擊 `下載/Agent Teams/Open VIXO Agents.command` (macOS) 或 `Open VIXO Agents.cmd` (Windows)，也可在 Session 中說「開啟 VIXO Agents Dashboard」。
 
 安裝後開啟新 Session，可以說：
@@ -60,7 +73,8 @@ Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位�
 
 ## 驗證狀態
 
-- 36 個自動化測試：35 通過，1 個需 live Codex CDP 的環境測試標記 skip；另有 Codex 側欄實機穩定性檢查通過。
+- v1.7.0 本機程式回歸 58 通過、0 失敗、1 個需 live Codex CDP 的環境測試 skip。
+- 隔離瀏覽器另驗證工作台 9 組、图示 4 組、嵌入生命週期 3 組與雙側欄點擊 7 組；不是 Codex App 實機端到端證據。最新桌面重載仍需使用者確認。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
 - macOS arm64 實機雙宿主安裝通過。
 - GitHub Actions 的 `macos-latest` 與 `windows-latest` 均使用真實 Claude Code／Codex CLI 完成安裝驗證。

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VIXO Agents</title>
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/workbench.css">
   <style>
     .status.failed,.status.rejected{color:#b44136}.status.waiting-input{color:#6a56a3}
     .run-side{display:flex;min-width:180px;flex-direction:column;align-items:flex-end;gap:9px}
@@ -26,16 +27,17 @@
     <main>
       <header>
         <div><div class="eyebrow">VIXO AGENT TEAM</div><h1 id="page-title">員工總覽</h1><p id="page-subtitle">把訓練結果、技能與執行流程放在同一個畫面。</p></div>
-        <div class="header-actions"><button id="check-update" class="secondary">檢查更新</button><button id="refresh" class="secondary">重新整理</button></div>
+        <div class="header-actions"><button id="check-update" class="secondary"><span class="vixo-inline-icon" data-ui-icon="down" aria-hidden="true"></span>檢查更新</button><button id="refresh" class="secondary"><span class="vixo-inline-icon" data-ui-icon="refresh" aria-hidden="true"></span>重新整理</button></div>
       </header>
       <section id="update-banner" class="update-banner" hidden></section>
       <section id="summary" class="summary"></section>
       <section id="content"></section>
+      <section id="workbench" hidden aria-label="VIXO Docs 工作台"></section>
     </main>
   </div>
   <dialog id="run-dialog">
     <form id="run-form" method="dialog">
-      <button class="dialog-close" value="cancel" aria-label="關閉">×</button>
+      <button class="dialog-close" value="cancel" aria-label="關閉"><span class="vixo-inline-icon" data-ui-icon="close" aria-hidden="true"></span></button>
       <div class="eyebrow">RUN WORKFLOW</div><h2>執行 Workflow</h2>
       <input type="hidden" name="agent"><input type="hidden" name="workflow">
       <label>執行宿主<select name="host"><option value="codex">Codex</option><option value="claude">Claude Code</option></select></label>
@@ -45,12 +47,12 @@
       <label>任務說明<textarea name="task" rows="4" required>執行這個 Workflow</textarea></label>
       <label>核准模式<select name="approvalMode"><option value="manual">遇到核准節點時暫停（建議）</option><option value="auto">本次自動核准 Workflow 節點</option></select></label>
       <p class="form-note">自動核准只套用於這個 Workflow 內建的確認節點，不會繞過 Codex／Claude Code 的工具權限與安全規則。</p>
-      <button class="primary" value="default">開始執行</button>
+      <button class="primary" value="default"><span class="vixo-inline-icon" data-ui-icon="play" aria-hidden="true"></span>開始執行</button>
     </form>
   </dialog>
   <dialog id="schedule-dialog">
     <form id="schedule-form" method="dialog">
-      <button class="dialog-close" value="cancel" aria-label="關閉">×</button>
+      <button class="dialog-close" value="cancel" aria-label="關閉"><span class="vixo-inline-icon" data-ui-icon="close" aria-hidden="true"></span></button>
       <div class="eyebrow">AUTOMATION</div><h2>設定每日排程</h2>
       <input type="hidden" name="agentId"><input type="hidden" name="workflowId">
       <label>執行時間<input name="time" type="time" value="08:00" required></label>
@@ -58,7 +60,7 @@
       <label>任務說明<textarea name="task" rows="3">依排程執行這個 Workflow</textarea></label>
       <label>核准模式<select name="approvalMode"><option value="manual">遇到核准節點時暫停</option><option value="auto">排程執行時自動核准 Workflow 節點</option></select></label>
       <p class="form-note">排程若需要無人值守執行，可選擇自動核准；宿主安全權限仍會保留。</p>
-      <button class="primary" value="default">儲存排程</button>
+      <button class="primary" value="default"><span class="vixo-inline-icon" data-ui-icon="check" aria-hidden="true"></span>儲存排程</button>
     </form>
   </dialog>
   <div id="toast" role="status"></div>

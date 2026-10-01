@@ -1,10 +1,12 @@
 {
   "name": "agent-teams-builder-release",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs && npm --prefix plugins/agent-teams-builder test",
+    "test:embed-lifecycle": "node scripts/test-embed-lifecycle.mjs",
+    "test:workbench-icons": "node scripts/test-workbench-icons.mjs",
     "validate": "claude plugin validate plugins/agent-teams-builder --strict",
     "release:build": "node scripts/build-release.mjs"
   }

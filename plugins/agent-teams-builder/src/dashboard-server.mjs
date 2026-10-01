@@ -8,6 +8,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
 import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
+import { getWorkbenchRun, readWorkbenchPreferences, saveWorkbenchPreferences, workbenchState } from "./workbench-store.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webRoot = path.join(packageRoot, "web");
@@ -498,6 +499,7 @@ function contentType(file) {
   if (file.endsWith(".css")) return "text/css; charset=utf-8";
   if (file.endsWith(".js")) return "text/javascript; charset=utf-8";
   if (file.endsWith(".svg")) return "image/svg+xml";
+  if (file.endsWith(".json")) return "application/json; charset=utf-8";
   return "application/octet-stream";
 }
 
@@ -513,6 +515,22 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === "GET" && url.pathname === "/api/state") {
           const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions });
           return send(response, 200, dashboardState(update));
+        }
+        if (request.method === "GET" && url.pathname === "/api/workbench") {
+          return send(response, 200, workbenchState(ensureAgentTeamsRoot(), {
+            period: url.searchParams.get("period") || "today",
+            agents: listAgents().map((summary) => getAgent(summary.id)),
+            schedules: readJson(schedulesFile(), [])
+          }));
+        }
+        if (url.pathname === "/api/preferences/workbench") {
+          if (request.method === "GET") return send(response, 200, readWorkbenchPreferences(ensureAgentTeamsRoot()));
+          if (request.method === "POST") return send(response, 200, saveWorkbenchPreferences(ensureAgentTeamsRoot(), await bodyJson(request)));
+        }
+        const runDetail = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
+        if (request.method === "GET" && runDetail) {
+          const run = getWorkbenchRun(ensureAgentTeamsRoot(), decodeURIComponent(runDetail[1]));
+          return send(response, run ? 200 : 404, run || { error: "Run not found" });
         }
         if (request.method === "POST" && url.pathname === "/api/update/check") {
           const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions, force: true });
@@ -566,10 +584,10 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
   };
 }
 
-export async function serve({ port = defaultPort } = {}) {
+export async function serve({ port = defaultPort, token: restartToken } = {}) {
   ensureAgentTeamsRoot();
   fs.mkdirSync(systemRoot(), { recursive: true });
-  const { server, token } = createDashboardServer();
+  const { server, token } = createDashboardServer({ token: restartToken });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);

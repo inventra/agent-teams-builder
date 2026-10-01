@@ -74,3 +74,12 @@ test("native Play creates a project-scoped Codex task and verifies its assignmen
   assert.match(source, /nativeThreadProjectId\(threadId\) === projectId/);
   assert.match(source, /createNativeThread/);
 });
+
+test("sidebar injection supports the compact navigation rail introduced in Codex 26.924", () => {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const source = fs.readFileSync(path.join(here, "..", "inject", "vixo-agents.user.js"), "utf8");
+  assert.match(source, /data-app-navigation-rail/);
+  assert.match(source, /data-sidebar-destination="builtin:projects"/);
+  assert.match(source, /button\.querySelector\("\.sr-only"\)/);
+  assert.match(source, /removeAttribute\("data-sidebar-destination"\)/);
+});

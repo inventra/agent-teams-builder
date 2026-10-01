@@ -1,11 +1,24 @@
+import { createWorkbench } from "./workbench.js";
+import { icon } from "./icons.js";
+
+document.querySelectorAll("[data-ui-icon]").forEach((element) => {
+  element.innerHTML = icon(element.dataset.uiIcon);
+});
 let storedToken = "";
 try { storedToken = sessionStorage.getItem("vixo-token") || ""; } catch {}
 const token = globalThis.__VIXO_AGENTS_EMBED_TOKEN__ || new URLSearchParams(location.search).get("token") || storedToken;
 try { if (token) sessionStorage.setItem("vixo-token", token); } catch {}
 const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
 let state = null;
-let selected = "all";
+let selected = "docs";
 let dismissedUpdateSuccess = null;
+const workbench = createWorkbench({
+  api: (...args) => api(...args), esc: (value) => esc(value), toast: (message) => toast(message),
+  play: (agent, workflow) => openRunDialog(agent, workflow),
+  schedule: (agent, workflow) => openScheduleDialog(agent, workflow),
+  openThread: (threadId) => window.parent.postMessage({ type: "vixo-agents:open-codex-thread", threadId }, "*"),
+  onNavigate: () => { if (state) renderNav(); }
+});
 
 const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[char]);
 const toast = (message) => { const el=document.querySelector("#toast"); el.textContent=message; el.classList.add("show"); setTimeout(()=>el.classList.remove("show"),2600); };
@@ -19,8 +32,17 @@ async function api(path, options={}) {
 
 function renderNav() {
   const nav=document.querySelector("#agent-nav");
-  nav.innerHTML=`<button class="nav-item ${selected==="all"?"active":""}" data-id="all">員工總覽<span>${state.agents.length} 位員工</span></button>`+state.agents.map(agent=>`<button class="nav-item ${selected===agent.id?"active":""}" data-id="${esc(agent.id)}">${esc(agent.displayName)}<span>${agent.skills.length} Skills · ${(agent.workflows||[]).length} Workflows</span></button>`).join("");
-  nav.querySelectorAll("button").forEach(button=>button.onclick=()=>{selected=button.dataset.id;render();});
+  nav.innerHTML=`<button class="nav-item ${selected==="all"?"active":""}" data-id="all"><div class="nav-heading">${icon("team")}員工總覽</div><span class="nav-description">${state.agents.length} 位員工</span></button>`+state.agents.map(agent=>`<button class="nav-item ${selected===agent.id?"active":""}" data-id="${esc(agent.id)}"><div class="nav-heading">${icon("user")}${esc(agent.displayName)}</div><span class="nav-description">${agent.skills.length} Skills · ${(agent.workflows||[]).length} Workflows</span></button>`).join("");
+  const docsNav = selected === "docs" ? [
+    ["skins", "L0　介面樣式"], ["home", "L1　首頁總覽"], ["office", "像素辦公室"],
+    ["functions", "L2　功能層"], ["system", "L3　系統層"], ["runs", "執行中心"]
+  ].map(([view,label])=>'<button class="nav-item docs-sub '+(workbench.view===view?"active":"")+'" data-view="'+view+'"><div class="nav-heading">'+icon(view)+label+'</div></button>').join("") : "";
+  nav.insertAdjacentHTML("afterbegin", '<button class="nav-item '+(selected==="docs"?"active":"")+'" data-id="docs"><div class="nav-heading">'+icon("docs")+'Docs</div><span class="nav-description">首頁與像素工作台</span></button>'+docsNav);
+  nav.querySelectorAll("button").forEach(button=>button.onclick=()=>{
+    if(button.dataset.view){selected="docs";workbench.navigate(button.dataset.view);}
+    else selected=button.dataset.id;
+    render();
+  });
 }
 
 function renderUpdate() {
@@ -34,7 +56,7 @@ function renderUpdate() {
     banner.hidden=false;banner.className="update-banner failed";banner.innerHTML=`<div><strong>上次更新沒有完成</strong><p>${esc(operation.error||"請重新執行更新。")}</p></div><button class="secondary apply-update">重試更新</button>`;return;
   }
   if(operation?.status==="succeeded"&&operation.revision===update.currentRevision&&!update.available&&dismissedUpdateSuccess!==operation.revision){
-    banner.hidden=false;banner.className="update-banner success";banner.innerHTML=`<div><strong>已更新完成</strong><p>目前版本 ${esc(update.currentVersion)}，Plugin、頁面與 Skills 已同步。</p></div><button class="banner-close" aria-label="關閉">×</button>`;return;
+    banner.hidden=false;banner.className="update-banner success";banner.innerHTML=`<div><strong>已更新完成</strong><p>目前版本 ${esc(update.currentVersion)}，Plugin、頁面與 Skills 已同步。</p></div><button class="banner-close" aria-label="關閉">${icon("close")}</button>`;return;
   }
   if(update.available){
     const latest=update.latestVersion?`v${update.latestVersion}`:`${update.latestRevision.slice(0,12)}`;
@@ -45,7 +67,7 @@ function renderUpdate() {
 
 function workflowCard(agent, workflow) {
   const hostAvailable=state.hosts.codex||state.hosts.claude;
-  return `<article class="workflow"><div class="workflow-top"><div><h4>${esc(workflow.name)}</h4><p>${esc(workflow.description)}</p></div><div class="actions"><button class="secondary schedule" data-agent="${esc(agent.id)}" data-workflow="${esc(workflow.id)}" ${hostAvailable?"":"disabled"}>排程</button><button class="primary play" data-agent="${esc(agent.id)}" data-workflow="${esc(workflow.id)}" ${hostAvailable?"":"disabled"}>▶ Play</button></div></div><div class="nodes">${workflow.nodes.map(node=>`<div class="node ${esc(node.type)}"><span class="node-type">${esc(node.type)}</span><strong>${esc(node.name)}</strong><small>${esc(node.skillId?`Skill · ${node.skillId}`:node.instructions)}</small>${node.requiresApproval?'<span class="tag">需確認</span>':''}</div>`).join("")}</div></article>`;
+  return `<article class="workflow"><div class="workflow-top"><div><h4>${esc(workflow.name)}</h4><p>${esc(workflow.description)}</p></div><div class="actions"><button class="secondary schedule" data-agent="${esc(agent.id)}" data-workflow="${esc(workflow.id)}" ${hostAvailable?"":"disabled"}>${icon("calendar")} 排程</button><button class="primary play" data-agent="${esc(agent.id)}" data-workflow="${esc(workflow.id)}" ${hostAvailable?"":"disabled"}>${icon("play")} Play</button></div></div><div class="nodes">${workflow.nodes.map(node=>`<div class="node ${esc(node.type)}"><span class="node-type">${esc(node.type)}</span><strong>${esc(node.name)}</strong><small>${esc(node.skillId?`Skill · ${node.skillId}`:node.instructions)}</small>${node.requiresApproval?'<span class="tag">需確認</span>':''}</div>`).join("")}</div></article>`;
 }
 
 function employeeCard(agent) {
@@ -63,6 +85,23 @@ function renderRuns() {
     if(run.status==="opened-in-codex"&&run.threadId) controls=`<button class="primary open-native-thread" data-thread="${esc(run.threadId)}">在 Codex 開啟</button>`;
     return `<div class="run"><div><strong>${esc(run.agentName||run.agentId)} · ${esc(run.workflowName||run.workflowId)}</strong><p>${esc(run.host)}${run.projectName?` · ${esc(run.projectName)}`:""} · ${esc(new Date(run.startedAt).toLocaleString())}${run.approvalMode==="auto"?" · 本次自動核准":""}</p>${run.pendingNodeName?`<p>待核准：${esc(run.pendingNodeName)}</p>`:""}${detail}</div><div class="run-side"><span class="status ${esc(run.status)}">${esc(labels[run.status]||run.status)}</span><div class="run-actions">${controls}</div></div></div>`;
   }).join("")}</div></div></section>`;
+}
+
+function openRunDialog(agent, workflow) {
+  if (!state.hosts.codex && !state.hosts.claude) return toast("尚未連結可用的執行宿主");
+  configureRunForm();
+  const form=document.querySelector("#run-form");
+  form.elements.agent.value=agent;form.elements.workflow.value=workflow;
+  form.elements.host.value=state.hosts.codex?"codex":"claude";form.elements.host.onchange?.();
+  document.querySelector("#run-dialog").showModal();
+}
+
+function openScheduleDialog(agent, workflow) {
+  if (!state.hosts.codex && !state.hosts.claude) return toast("尚未連結可用的執行宿主");
+  const form=document.querySelector("#schedule-form");
+  form.elements.agentId.value=agent;form.elements.workflowId.value=workflow;
+  form.elements.host.value=state.hosts.codex?"codex":"claude";
+  document.querySelector("#schedule-dialog").showModal();
 }
 
 function bindActions() {
@@ -110,11 +149,17 @@ function render() {
   document.querySelector("#page-subtitle").textContent=selectedAgent?selectedAgent.purpose:"把訓練結果、技能與執行流程放在同一個畫面。";
   document.querySelector("#content").innerHTML=agents.length?agents.map(employeeCard).join("")+renderRuns():'<div class="empty"><h2>還沒有員工</h2><p>在 Codex 或 Claude Code 完成一段流程後，說「幫我變成一個員工」。</p></div>';
   document.querySelector("#host-status").textContent=[state.hosts.codex&&"Codex",state.hosts.claude&&"Claude Code"].filter(Boolean).join(" + ")||"未連結宿主";
-  configureRunForm();
+  if(!document.querySelector("#run-dialog").open)configureRunForm();
   bindActions();
+  const docs=selected==="docs";
+  document.querySelector("main>header").hidden=docs;
+  document.querySelector("#summary").hidden=docs;
+  document.querySelector("#content").hidden=docs;
+  if(docs){if(!workbench.active)workbench.open(state);}
+  else workbench.close();
 }
 
-async function load(){try{state=await api("/api/state");render();}catch(error){document.querySelector("#content").innerHTML=`<div class="empty"><h2>無法載入</h2><p>${esc(error.message)}</p></div>`;}}
+async function load(){try{state=await api("/api/state");render();if(workbench.active)await workbench.refresh(state);}catch(error){if(workbench.active)workbench.reportError("無法更新："+error.message);else document.querySelector("#content").textContent="無法載入："+error.message;}}
 document.querySelector("#refresh").onclick=load;
 document.querySelector("#check-update").onclick=async()=>{const button=document.querySelector("#check-update");button.disabled=true;try{state.update=await api("/api/update/check",{method:"POST",body:"{}"});render();toast(state.update.error?`無法檢查更新：${state.update.error}`:state.update.available?"找到新版，可立即更新":"目前已是最新版");}catch(error){toast(error.message);}finally{button.disabled=false;}};
 document.querySelector("#run-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{const run=await api("/api/runs",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#run-dialog").close();if(run.nativeLaunch){window.parent.postMessage({type:"vixo-agents:create-codex-thread",payload:run.nativeLaunch},"*");toast(`正在 ${run.nativeLaunch.projectName} 建立 Codex 任務`);}else toast(`已交給 ${run.host} 執行`);await load();}catch(error){toast(error.message);}});

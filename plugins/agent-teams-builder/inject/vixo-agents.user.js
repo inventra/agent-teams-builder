@@ -1,5 +1,12 @@
-(() => {
+(function initializeVixoAgents() {
   "use strict";
+
+  // The desktop installs this at document-start, before <html> exists.
+  // Wait for a real DOM rather than leaving a half-created sentinel behind.
+  if (!document.documentElement) {
+    document.addEventListener("DOMContentLoaded", initializeVixoAgents, { once: true });
+    return;
+  }
 
   const SENTINEL = "__vixoAgentsInjection__";
   const OWNED = "data-vixo-agents-owned";
@@ -105,15 +112,40 @@
     (document.head || document.documentElement).appendChild(style);
   }
 
+  function isVisibleElement(element) {
+    if (!element?.isConnected || element.closest('[hidden], [inert], [aria-hidden="true"]')) return false;
+    const rect = element.getBoundingClientRect();
+    const style = window.getComputedStyle(element);
+    return rect.width > 0 && rect.height > 0 && style.display !== "none"
+      && style.visibility !== "hidden" && style.visibility !== "collapse";
+  }
+
+  function visibleElements(selector, scope = document) {
+    return Array.from(scope.querySelectorAll(selector)).filter(isVisibleElement);
+  }
+
   function findReferenceButton() {
-    const scroll = document.querySelector("[data-app-action-sidebar-scroll]");
+    for (const rail of visibleElements("[data-app-navigation-rail]")) {
+      // Codex 26.924 moved the primary destinations out of the scrolling
+      // project sidebar and into a compact navigation rail. Mount beside the
+      // Projects destination so VIXO remains a first-class page instead of
+      // disappearing when there is no button before the first sidebar section.
+      const taskboard = rail.querySelector(`#${TASKBOARD_ENTRY_ID}`);
+      if (taskboard?.parentElement && isVisibleElement(taskboard)) return taskboard;
+      const projects = visibleElements('[data-sidebar-destination="builtin:projects"]', rail)[0];
+      if (projects?.parentElement) return projects;
+      const destinations = visibleElements("button[data-sidebar-destination]", rail);
+      if (destinations.length > 0) return destinations.at(-1);
+    }
+
+    const scroll = visibleElements("[data-app-action-sidebar-scroll]")[0];
     if (!scroll) return null;
     // Dashi Taskboard also keeps its entry immediately after Plugins. Using
     // that entry as our preferred anchor establishes one stable order instead
     // of letting both MutationObservers move their buttons after Plugins.
     const taskboard = scroll.querySelector(`#${TASKBOARD_ENTRY_ID}`);
-    if (taskboard?.parentElement) return taskboard;
-    const buttons = Array.from(scroll.querySelectorAll("button"))
+    if (taskboard?.parentElement && isVisibleElement(taskboard)) return taskboard;
+    const buttons = visibleElements("button", scroll)
       .filter((button) => button.getAttribute(OWNED) !== "true");
     const plugin = buttons.find((button) => PLUGIN_LABELS.includes(normalized(
       button.textContent || button.getAttribute("aria-label"),
@@ -131,7 +163,8 @@
   function setEntryText(button) {
     button.setAttribute("aria-label", "開啟 VIXO Agents");
     button.setAttribute("title", "VIXO Agents");
-    const label = button.querySelector(".text-fade-truncate")
+    const label = button.querySelector(".sr-only")
+      || button.querySelector(".text-fade-truncate")
       || Array.from(button.querySelectorAll("span")).find((node) => PLUGIN_LABELS.includes(normalized(node.textContent)));
     if (label) label.textContent = "VIXO Agents";
     else button.textContent = "VIXO Agents";
@@ -157,6 +190,9 @@
     button.removeAttribute("aria-expanded");
     button.removeAttribute("aria-controls");
     button.removeAttribute("aria-describedby");
+    button.removeAttribute("data-sidebar-destination");
+    button.removeAttribute("data-selected");
+    button.removeAttribute("data-suppress-active-style");
     button.removeAttribute("data-state");
     button.setAttribute(OWNED, "true");
     button.querySelectorAll("[id]").forEach((node) => node.removeAttribute("id"));
@@ -184,12 +220,18 @@
   }
 
   function findPageMount() {
-    const frameHost = document.querySelector(".app-shell-main-content-frame");
-    const viewport = frameHost?.closest?.("[data-app-shell-main-content-layout]")
-      || document.querySelector("[data-app-shell-main-content-layout]");
-    const surface = viewport?.parentElement;
-    if (!viewport || !surface || !surface.closest("main")) return null;
-    return surface;
+    // Our active viewport is intentionally hidden behind the embedded page.
+    // Keep its still-visible host rather than selecting a background shell.
+    const current = page?.parentElement;
+    if (current?.closest("main") && isVisibleElement(current)) return current;
+    const shell = entry?.closest("[data-app-shell-frame]") || document;
+    const viewports = visibleElements("[data-app-shell-main-content-layout]", shell);
+    if (shell !== document && !viewports.length) viewports.push(...visibleElements("[data-app-shell-main-content-layout]"));
+    for (const viewport of viewports) {
+      const surface = viewport.parentElement;
+      if (surface?.closest("main") && isVisibleElement(surface)) return surface;
+    }
+    return null;
   }
 
   function createPage() {
@@ -224,6 +266,16 @@
     if (!active) return false;
     const surface = findPageMount();
     if (!surface) return false;
+    // Reparenting an iframe (including after a React host replacement) destroys
+    // its browsing context. A unique new frame name makes the daemon deliver
+    // the document again; a stale "ready" flag must not hide an empty frame.
+    if (page && page.parentElement !== surface) {
+      restoreNative();
+      page.remove();
+      page = null;
+      frame = null;
+      loaded = false;
+    }
     if (!page) page = createPage();
     if (page.parentElement !== surface) surface.appendChild(page);
     surface.setAttribute(HOST, "true");
@@ -247,6 +299,7 @@
 
   function open() {
     try { window.__codexTaskboardInjection__?.close?.(false); } catch {}
+    try { window.__lazyofficeAgentsInjection__?.close?.(); } catch {}
     active = true;
     ensureEntry();
     mountPage();
@@ -255,6 +308,11 @@
 
   function refresh() {
     ensureEntry();
+    const otherEntry = document.getElementById("lazyoffice-agents-sidebar-entry");
+    if (active && isVisibleElement(otherEntry) && otherEntry.getAttribute("aria-current") === "page") {
+      close();
+      return;
+    }
     if (active) mountPage();
   }
 
@@ -477,7 +535,9 @@
     if (!active) return;
     const clickable = event.target?.closest?.("button,a,[role='button'],[data-app-action-sidebar-thread-id]");
     if (!clickable || clickable === entry || clickable.closest?.(`#${ENTRY_ID}`)) return;
-    if (clickable.closest?.("aside nav[role='navigation']")) close();
+    if (clickable.closest?.(
+      "aside nav[role='navigation'],[data-app-navigation-rail],[data-app-action-sidebar-scroll]",
+    )) close();
   }
 
   function onFrameMessage(event) {
@@ -518,7 +578,9 @@
       sourceHash,
       dashboardOrigin: new URL(dashboardUrl).origin,
       entryMounted: Boolean(entry?.isConnected),
-      pageVisible: Boolean(active && page && !page.hidden),
+      entryVisible: isVisibleElement(entry),
+      mountAvailable: Boolean(findPageMount()),
+      pageVisible: Boolean(active && page && !page.hidden && isVisibleElement(page)),
       frameLoaded: loaded,
       frameName,
     };
