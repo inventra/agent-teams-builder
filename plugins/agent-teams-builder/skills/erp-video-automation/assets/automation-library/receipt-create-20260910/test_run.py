@@ -114,8 +114,8 @@ class PortabilityTests(unittest.TestCase):
                 self.assertEqual(flow.run(blank,self.root/'runs',None)['stage'],'needs_input')
                 with self.assertRaisesRegex(RuntimeError,'Missing expense-claim-helper dependency') as error:
                     flow.run(self.payload(),self.root/'runs','fixed-request-01')
-                self.assertIn(str(selected/'expense-claim-helper/scripts/erp_native.py'),str(error.exception))
-                self.assertNotIn(str(executor),str(error.exception))
+                self.assertIn(str((selected/'expense-claim-helper/scripts/erp_native.py').resolve()),str(error.exception))
+                self.assertNotIn(str(executor.resolve()),str(error.exception))
                 self.assertFalse((self.root/'runs').exists())
 
     def test_unready_status_and_invalid_id_do_not_import_executor(self):
