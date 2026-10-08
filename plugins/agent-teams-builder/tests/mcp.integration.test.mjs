@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { exportSpecBundle } from '../src/cloud-bundle.mjs';
@@ -57,7 +57,7 @@ globalThis.fetch = async (value, options = {}) => {
   fs.writeFileSync(path.join(cloud, 'legacy-owner.json'), JSON.stringify({ formatVersion: 1, userId, agentIds: [], createdAt: new Date().toISOString() }));
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ['--import', preload, serverPath],
+    args: ['--import', pathToFileURL(preload).href, serverPath],
     env: { ...process.env, AGENT_TEAMS_HOME: temporary }
   });
   const client = new Client({ name: "agent-teams-test", version: "1.0.0" });
