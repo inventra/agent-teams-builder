@@ -77,3 +77,30 @@ test('verified offline account may save private drafts without network writes, b
     f.login(b);await assert.rejects(requireAccount({allowOffline:true}),{code:'network_error'});
   }finally{f.cleanup();}
 });
+
+test('HTTP preview accepts a valid multi-file bundle above 1 MiB and rejects oversized UTF-8 requests before creating drafts',async()=>{
+  const f=fixture();let server;
+  try{
+    f.login(a);
+    const files=[{path:'skills/summarize/references/large-a.md',content:'A'.repeat(700000)},{path:'skills/summarize/references/large-b.md',content:'B'.repeat(700000)}];
+    const portable=exportSpecBundle({kind:'agent',spec,files});
+    assert.ok(files.every(file=>Buffer.byteLength(file.content,'utf8')<1024*1024));
+    assert.ok(Buffer.byteLength(JSON.stringify(portable),'utf8')>1024*1024);
+    ({server}=createDashboardServer({token:'large-preview-bearer'}));await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+    const url=`http://127.0.0.1:${server.address().port}/api/library/preview`,headers={authorization:'Bearer large-preview-bearer','content-type':'application/json'};
+    const response=await fetch(url,{method:'POST',headers,body:JSON.stringify({bundle:portable,title:'Large portable fixture'})});
+    assert.equal(response.status,200);
+    const preview=await response.json();assert.match(preview.token,/^local_[a-f0-9]{64}$/);
+    for(const file of files)assert.equal(preview.bundle.files.find(resource=>resource.path===file.path).content,file.content,'complete resource bytes survive the HTTP preview');
+    const previews=path.join(cloudRoot(),'previews'),before=fs.readdirSync(previews).filter(name=>name.endsWith('.json')).sort();
+    assert.deepEqual(before,[`${preview.token}.json`]);
+    const preserved=fs.readFileSync(path.join(previews,before[0]),'utf8');
+    const oversized=JSON.stringify({bundle:portable,description:'測'.repeat(1700000)});
+    assert.ok(oversized.length<6*1024*1024,'the oversized request fits a character-only cap');
+    assert.ok(Buffer.byteLength(oversized,'utf8')>6*1024*1024,'UTF-8 bytes must enforce the request cap');
+    await assert.rejects(fetch(url,{method:'POST',headers,body:oversized}),TypeError);
+    assert.deepEqual(fs.readdirSync(previews).filter(name=>name.endsWith('.json')).sort(),before);
+    assert.equal(fs.readFileSync(path.join(previews,before[0]),'utf8'),preserved);
+    assert.equal(fs.existsSync(path.join(cloudRoot(),'library',a)),false,'preview and rejected requests cannot create confirmed drafts or a sync queue');
+  }finally{if(server)await new Promise(resolve=>server.close(resolve));f.cleanup();}
+});

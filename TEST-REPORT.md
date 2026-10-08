@@ -4,8 +4,8 @@
 
 ## v1.12.0 本地與雲端資料庫
 
-- 本機全套 Node 測試：190 PASS、0 FAIL、1 SKIP（根目錄 78、Plugin 112 通過；原有需 live Codex CDP 的測試維持 SKIP）。涵蓋登入 gate、帳號隔離、排程／執行準備途中換帳號拒絕、持久佇列、跨 process 鎖與 crash recovery。
-- 本地同步回歸驗證：連續 10 次乾淨讀取／同步沒有額外 Auth／REST 請求；metadata 更新只下載變更 revision；接近 5 MiB 的套件可持久保存；同步途中再編輯保留草稿；寫入回應遺失只透過確切版本、內容與 actor 對帳，不盲目重送。
+- 本機全套 Node 測試：191 PASS、0 FAIL、1 SKIP（根目錄 78、Plugin 113 通過；原有需 live Codex CDP 的測試維持 SKIP）。涵蓋登入 gate、帳號隔離、排程／執行準備途中換帳號拒絕、持久佇列、跨 process 鎖與 crash recovery。
+- 本地同步回歸驗證：連續 10 次乾淨讀取／同步沒有額外 Auth／REST 請求；metadata 更新只下載變更 revision；接近 5 MiB 的套件可持久保存，HTTP 預覽支援超過 1 MiB 的合法套件且拒絕 UTF-8 超限請求；同步途中再編輯保留草稿；寫入回應遺失只透過確切版本、內容與 actor 對帳，不盲目重送。
 - MCP 隔離回歸涵蓋：未登入拒絕、確認後本地佇列、Agent／Skill／Workflow 合併讀取與準備、CAS 衝突另存副本，以及切換帳號後拒絕存取其他帳號項目。測試不呼叫正式宿主執行業務。
 - 安裝回歸驗證：替換前建立一次 legacy ownership 快照，候選身分僅採舊版已驗證 session；登入／重跑不改寫歸屬；未歸屬資料須確認匯入；symlink／特殊檔案拒絕；快照不含帳密／token，原 SOP 不變。
 - 首頁瀏覽器 fixture 通過：登入前不請求私有資料、待審核、合併清單、完整 SOP 確認、衝突比較、nullable 舊本機內容唯讀、停用／跨頁登出清空畫面、舊回應拒收、離線私人草稿及 390px 版面。既有雲端管理頁、帳密／團隊／手機版回歸也通過。

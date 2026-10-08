@@ -35,11 +35,13 @@ function readJson(file, fallback) {
 
 function bodyJson(request) {
   return new Promise((resolve, reject) => {
-    let body = "";
+    let body = "", bytes = 0;
     request.setEncoding("utf8");
     request.on("data", (chunk) => {
+      bytes += Buffer.byteLength(chunk, "utf8");
+      // A valid 5 MiB portable bundle plus its request metadata must fit.
+      if (bytes > 6 * 1024 * 1024) return request.destroy(new Error("Request body is too large"));
       body += chunk;
-      if (body.length > 1_000_000) request.destroy(new Error("Request body is too large"));
     });
     request.on("end", () => {
       try { resolve(body ? JSON.parse(body) : {}); }
