@@ -168,3 +168,6 @@ await load();
 window.addEventListener("message",async event=>{if(event.source!==window.parent)return;const message=event.data;if(message?.type==="vixo-agents:thread-created"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({threadId:message.payload.threadId})});await load();}catch(error){toast(error.message);}}if(message?.type==="vixo-agents:thread-create-error"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({error:message.payload.error})});}catch{}toast(message.payload.error||"無法建立 Codex 任務");await load();}});
 try { window.parent.postMessage({ type: "vixo-agents:ready" }, "*"); } catch {}
 setInterval(load,5000);
+
+// The local bearer remains on this origin and is never sent to the cloud portal.
+document.getElementById("open-cloud").addEventListener("click", () => { location.href = `/cloud.html?token=${encodeURIComponent(token)}`; });

@@ -1,10 +1,16 @@
 # Agent Teams Builder
 
-把 Claude Code 或 Codex Session 裡完成過的流程，整理成可重複使用、可持續修改的本機 Agent。Agent 會儲存在使用者的 `下載/Agent Teams`，每個 Agent 使用獨立的英文資料夾，並可擁有多個 Skills。
+把 Claude Code 或 Codex Session 裡完成過的流程整理成 Agent。連接雲端後，以 Supabase 儲存的版本為準，支援換裝置同步、團隊分享 Agent／Skill／Workflow、衝突保留與版本回復；執行仍由目前的 Codex／Claude 宿主完成。
+
+## v1.9.0：雲端同步與團隊分享
+
+在外掛 Dashboard 按「雲端同步」，輸入一次性裝置連線碼或團隊邀請碼即可使用，無需 M365 或寄信註冊。自己的換機碼與同仁的團隊邀請码分開。既有員工可完整預覽後上傳；連線後新增或修改 Agent 會直接儲存雲端，並保留完整 SOP 確認流程。
+
+[雲端管理中心](https://inventra.github.io/agent-teams-builder/) · [使用與管理說明](docs/CLOUD-AGENT-TEAMS.md)
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.8.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.9.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。

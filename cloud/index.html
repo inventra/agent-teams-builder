@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fc">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <meta name="description" content="VIXO Agent Teams 雲端工作室：同步、管理與分享你的 Agent、Skill 和 Workflow。">
+  <title>VIXO Agent Teams · 雲端工作室</title>
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./app.mjs"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到內容</a>
+  <header class="site-header">
+    <a class="brand" href="./" aria-label="VIXO Agent Teams 首頁"><span class="brand-mark">V</span><span>VIXO <small>Agent Teams</small></span></a>
+    <div class="header-right"><span class="cloud-label"><span class="status-dot"></span>雲端工作室</span><span id="account"></span></div>
+  </header>
+  <div id="notice" class="notice" role="status" aria-live="polite" hidden></div>
+  <main id="main" tabindex="-1"><div class="loading-state"><span class="spinner"></span><p>正在開啟你的工作室…</p></div></main>
+  <footer class="site-footer"><span>Agent 隨你移動，經驗與團隊共享。</span><a href="https://github.com/inventra/agent-teams-builder" target="_blank" rel="noopener noreferrer">GitHub ↗</a></footer>
+  <dialog id="modal" aria-labelledby="modal-title"></dialog>
+  <noscript>請開啟 JavaScript 以使用 VIXO 雲端工作室。</noscript>
+</body>
+</html>

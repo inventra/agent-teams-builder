@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "./store.mjs";
+import { cloudStatus, cloudClient, cloudSync, listSourceAgents, getSourceAgent, prepareSourceRun, previewSourceAgent, commitSourcePreview, previewLocalPublish } from './cloud-service.mjs';
 
 const skillSchema = z.object({
   id: z.string(),
@@ -60,39 +61,52 @@ export function buildServer() {
   server.registerTool("agent_preview", {
     title: "Preview Agent creation or update",
     description: "Validate and preview a complete Agent definition. This does not create or modify the Agent. Show the preview to the user and ask for explicit confirmation before calling agent_commit.",
-    inputSchema: { action: z.enum(["create", "update"]), spec: agentSchema },
+    inputSchema: { action: z.enum(["create", "update"]), spec: agentSchema, cloudAssetId: z.string().optional(), expectedRevision: z.number().int().positive().optional(), workspaceId: z.string().nullable().optional() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
-  }, safe(createPreview));
+  }, safe(previewSourceAgent));
   server.registerTool("agent_commit", {
     title: "Commit confirmed Agent preview",
     description: "Persist a previously previewed Agent only after the user explicitly confirms the displayed SOP. Pass the preview token and the user's confirmation text verbatim.",
     inputSchema: { token: z.string(), userConfirmation: z.string() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
-  }, safe(commitPreview));
+  }, safe(commitSourcePreview));
   server.registerTool("agent_list", {
-    title: "List local Agent Teams",
-    description: "List Agents stored under the user's Downloads/Agent Teams directory.",
+    title: "List VIXO Agent Teams",
+    description: "List authorized cloud Agents when this device is connected; otherwise list local Agents. Cloud is the source of truth for connected devices.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-  }, safe(() => ({ root: ensureAgentTeamsRoot(), agents: listAgents() })));
+  }, safe(async () => ({ ...(await cloudStatus()), agents: await listSourceAgents() })));
   server.registerTool("agent_get", {
     title: "Read one Agent",
     description: "Get an Agent by English id, Chinese display name, or exact alias.",
     inputSchema: { agent: z.string() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-  }, safe(({ agent }) => getAgent(agent)));
+  }, safe(({ agent }) => getSourceAgent(agent)));
   server.registerTool("agent_prepare_run", {
     title: "Prepare current-host execution",
     description: "Resolve an Agent and Skill and return the exact prompt/SOP for execution by the current Codex or Claude Code session. The plugin never calls a separate model API.",
     inputSchema: { agent: z.string(), task: z.string(), skill: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-  }, safe(prepareRun));
+  }, safe((input) => prepareSourceRun(input)));
   server.registerTool("workflow_prepare_run", {
     title: "Prepare a Workflow for host-native execution",
     description: "Resolve one saved Workflow and return its ordered node plan and exact prompt for Codex or Claude Code. No model API is called.",
     inputSchema: { agent: z.string(), workflow: z.string(), task: z.string().optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-  }, safe(prepareWorkflowRun));
+  }, safe((input) => prepareSourceRun(input, true)));
+  server.registerTool('cloud_status', { title: 'VIXO cloud connection', description: 'Read this device cloud connection status without returning credentials.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(cloudStatus));
+  server.registerTool('cloud_list', { title: 'List shared cloud content', description: 'List authorized Agent, Skill and Workflow cloud packages.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(() => cloudClient().listAssets()));
+  server.registerTool('cloud_preview_publish', {
+    title: 'Preview local content for cloud publication', description: 'Package a local Agent or one Skill/Workflow with dependencies. Show the full preview and obtain explicit confirmation before agent_commit. Personal memory and run data are excluded.',
+    inputSchema: { agent: z.string(), kind: z.enum(['agent', 'skill', 'workflow']).default('agent'), skillId: z.string().optional(), workflowId: z.string().optional(), workspaceId: z.string().nullable().optional(), id: z.string().optional(), expectedRevision: z.number().int().nonnegative().optional() }
+  }, safe(previewLocalPublish));
+  server.registerTool('cloud_prepare_run', {
+    title: 'Prepare a cloud Agent, Skill or Workflow', description: 'Verify current cloud permissions, download the selected version and return a host-native execution prompt. Execute prepared.prompt in the current session. This does not grant extra ERP or external action permissions.',
+    inputSchema: { assetId: z.string(), revision: z.number().int().positive().optional(), task: z.string(), skill: z.string().optional(), workflow: z.string().optional() }, annotations: { readOnlyHint: true }
+  }, safe((input) => cloudSync().prepareAssetRun(input)));
+  server.registerTool('cloud_create_device_code', { title: 'Connect another personal device', description: 'Create a one-time ten-minute code for the SAME personal cloud identity on another device. Use only when the user asks to connect their own device; do not use this for coworker sharing.', inputSchema: {} }, safe(() => cloudClient().createDeviceCode()));
+  server.registerTool('cloud_create_workspace', { title: 'Create a VIXO team space', description: 'Create a team sharing space owned by the currently connected identity.', inputSchema: { name: z.string() } }, safe(({ name }) => cloudClient().createWorkspace(name)));
+  server.registerTool('cloud_create_invite', { title: 'Invite a coworker', description: 'Create a team invitation code. viewer can use/copy; editor can also publish shared versions. Return the code to the user; do not send messages to others.', inputSchema: { workspaceId: z.string(), role: z.enum(['viewer', 'editor']).default('viewer') } }, safe(({ workspaceId, role }) => cloudClient().createInvite(workspaceId, role)));
   server.registerTool("dashboard_open", {
     title: "Open the VIXO Agents Dashboard",
     description: "Start the local visual Agent, Skill, Workflow, run, and schedule dashboard, then open it in the user's browser.",

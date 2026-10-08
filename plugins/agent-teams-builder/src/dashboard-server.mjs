@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
 import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
 import { getWorkbenchRun, readWorkbenchPreferences, saveWorkbenchPreferences, workbenchState } from "./workbench-store.mjs";
+import { cloudStatus, cloudClient, cloudSync, cloudConnected, cloudPortalUrl, listSourceAgents, prepareSourceRun, previewLocalPublish, commitSourcePreview } from './cloud-service.mjs';
 import { renderSharedVideoPolicy } from "./shared-video-policy.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -46,6 +47,21 @@ function bodyJson(request) {
     });
     request.on("error", reject);
   });
+}
+
+// The sandboxed desktop panel cannot open popups. Open only the bundled public
+// portal through the OS; never accept a destination or executable from the API.
+export async function openCloudPortal({ spawnImpl = spawn, platform = process.platform } = {}) {
+  const url = new URL(cloudPortalUrl());
+  if (url.protocol !== 'https:' || url.username || url.password) throw new Error('Invalid cloud portal URL');
+  const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'rundll32.exe' : 'xdg-open';
+  const args = platform === 'win32' ? ['url.dll,FileProtocolHandler', url.href] : [url.href];
+  await new Promise((resolve, reject) => {
+    const child = spawnImpl(command, args, { detached: true, stdio: 'ignore', windowsHide: true });
+    child.once('error', reject);
+    child.once('spawn', () => { child.unref(); resolve(); });
+  });
+  return { opened: true };
 }
 
 function send(response, status, value, headers = {}) {
@@ -241,11 +257,11 @@ function spawnWorkflowTurn(record, prompt, { resume = false } = {}) {
   child.on("close", (code) => finalize(code));
 }
 
-export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "manual" }) {
-  const prepared = prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
+export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "manual" }, preparedCloud = null) {
+  const prepared = preparedCloud || prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
   const selectedHost = chooseHost(host);
   const id = crypto.randomUUID();
-  const agentDirectory = path.join(agentTeamsRoot(), prepared.agent.id);
+  const agentDirectory = prepared.cloud?.cacheDirectory || path.join(agentTeamsRoot(), prepared.agent.id);
   const logFile = path.join(runsRoot(), `${id}.log`);
   fs.mkdirSync(runsRoot(), { recursive: true });
   const approvalNodes = prepared.workflow.nodes
@@ -254,6 +270,7 @@ export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "
   const record = {
     id,
     agentId: prepared.agent.id,
+    ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
     agentName: prepared.agent.displayName,
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
@@ -278,8 +295,8 @@ export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "
   return record;
 }
 
-export function prepareNativeCodexRun({ agent, workflow, task, approvalMode = "manual", projectId }) {
-  const prepared = prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
+export function prepareNativeCodexRun({ agent, workflow, task, approvalMode = "manual", projectId }, preparedCloud = null) {
+  const prepared = preparedCloud || prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
   chooseHost("codex");
   const project = listCodexProjects().find((item) => item.id === String(projectId || ""));
   if (!project) throw new Error("請選擇目前 Codex 中可用的專案");
@@ -290,6 +307,7 @@ export function prepareNativeCodexRun({ agent, workflow, task, approvalMode = "m
   const record = {
     id,
     agentId: prepared.agent.id,
+    ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
     agentName: prepared.agent.displayName,
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
@@ -394,29 +412,39 @@ function rejectWorkflowRun(id, message = "使用者拒絕這個核准節點") {
 }
 
 function publicRun(record) {
-  const { logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, workspacePath: _workspacePath, sessionId, ...safe } = record;
-  return { ...safe, threadId: record.executionMode === "codex-app" ? sessionId || null : null, resumable: Boolean(sessionId) };
+  const { cloud, logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, workspacePath: _workspacePath, sessionId, ...safe } = record;
+  return { ...safe, ...(cloud ? { cloud: { assetId: cloud.assetId, revision: cloud.revision } } : {}), threadId: record.executionMode === "codex-app" ? sessionId || null : null, resumable: Boolean(sessionId) };
 }
 
-function recentRuns() {
+export function cloudRecordVisible(record, userId = null) {
+  const isCloud = Boolean(record?.cloud || String(record?.agentId || '').startsWith('cloud:'));
+  return isCloud ? Boolean(userId && record?.cloud?.userId === userId) : !userId;
+}
+async function visibilityFilter() {
+  const userId = cloudConnected() ? (await cloudClient().getUser()).id : null;
+  return (record) => cloudRecordVisible(record, userId);
+}
+function recentRuns(visibleRecord = () => true) {
   fs.mkdirSync(runsRoot(), { recursive: true });
   return fs.readdirSync(runsRoot())
     .filter((name) => name.endsWith(".json"))
     .map((name) => readJson(path.join(runsRoot(), name), null))
-    .filter(Boolean)
+    .filter((record) => record && visibleRecord(record))
     .sort((left, right) => String(right.startedAt).localeCompare(String(left.startedAt)))
     .slice(0, 30)
     .map(publicRun);
 }
 
-function dashboardState(update = null) {
+async function dashboardState(update = null) {
   const codexProjects = availableHost("codex") ? listCodexProjects() : [];
+  const visible = await visibilityFilter();
   return {
     product: "VIXO Agents",
+    cloud: await cloudStatus(),
     root: ensureAgentTeamsRoot(),
-    agents: listAgents().map((summary) => getAgent(summary.id)),
-    schedules: readJson(schedulesFile(), []),
-    runs: recentRuns(),
+    agents: await listSourceAgents(),
+    schedules: readJson(schedulesFile(), []).filter(visible),
+    runs: recentRuns(visible),
     hosts: { codex: availableHost("codex"), claude: availableHost("claude") },
     codexProjects,
     update: update ? { ...update, operation: readUpdateOperation(ensureAgentTeamsRoot()) } : null,
@@ -424,16 +452,18 @@ function dashboardState(update = null) {
   };
 }
 
-function upsertSchedule(input) {
+async function upsertSchedule(input) {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time || "")) throw new Error("time must use 24-hour HH:MM format");
-  const prepared = prepareWorkflowRun({ agent: input.agentId, workflow: input.workflowId, task: input.task || "依排程執行 Workflow" });
+  const prepared = await prepareSourceRun({ agent: input.agentId, workflow: input.workflowId, task: input.task || "依排程執行 Workflow" }, true);
   const host = chooseHost(input.host);
   const schedules = readJson(schedulesFile(), []);
   const id = input.id || crypto.randomUUID();
   const existing = schedules.find((item) => item.id === id);
+  if (existing && !(await visibilityFilter())(existing)) throw new Error("Schedule not found");
   const schedule = {
     id,
     agentId: prepared.agent.id,
+    ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
     task: prepared.task,
@@ -451,31 +481,45 @@ function upsertSchedule(input) {
   return schedule;
 }
 
-function deleteSchedule(id) {
+async function deleteSchedule(id) {
+  const visible = await visibilityFilter();
   const schedules = readJson(schedulesFile(), []);
+  if (!schedules.some((item) => item.id === id && visible(item))) throw new Error("Schedule not found");
   const next = schedules.filter((item) => item.id !== id);
   if (next.length === schedules.length) throw new Error("Schedule not found");
   writeJson(schedulesFile(), next);
 }
 
-function processSchedules(now = new Date()) {
+let schedulesProcessing = false;
+export async function processSchedules(now = new Date(), { prepareCloud = (input) => prepareSourceRun(input, true), prepareLocal = prepareWorkflowRun, launch = startWorkflowRun } = {}) {
+  if (schedulesProcessing) return;
+  schedulesProcessing = true;
+  try {
   const schedules = readJson(schedulesFile(), []);
+  const currentCloudUser = cloudConnected() ? (await cloudClient().getUser()).id : null;
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   const date = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
-  let changed = false;
   for (const schedule of schedules) {
     if (!schedule.enabled || schedule.time !== time || schedule.lastRunDate === date) continue;
+    if (String(schedule.agentId).startsWith("cloud:") && (!currentCloudUser || schedule.cloud?.userId !== currentCloudUser)) continue;
     schedule.lastRunDate = date;
     schedule.updatedAt = new Date().toISOString();
-    changed = true;
+    // Persist the daily claim before network access; a slow refresh cannot launch twice.
+    const latest = readJson(schedulesFile(), []);
+    const current = latest.find((item) => item.id === schedule.id);
+    if (!current || !current.enabled || current.lastRunDate === date) continue;
+    current.lastRunDate = date; current.updatedAt = schedule.updatedAt;
+    writeJson(schedulesFile(), latest);
     try {
-      startWorkflowRun({
+      const input = { agent: schedule.agentId, workflow: schedule.workflowId, task: schedule.task, approvalMode: schedule.approvalMode || "manual" };
+      const prepared = await (String(schedule.agentId).startsWith("cloud:") ? prepareCloud(input) : prepareLocal(input));
+      launch({
         agent: schedule.agentId,
         workflow: schedule.workflowId,
         task: schedule.task,
         host: schedule.host,
         approvalMode: schedule.approvalMode || "manual"
-      });
+      }, prepared);
     }
     catch (error) {
       const id = crypto.randomUUID();
@@ -484,6 +528,7 @@ function processSchedules(now = new Date()) {
         agentId: schedule.agentId,
         workflowId: schedule.workflowId,
         workflowName: schedule.workflowName,
+        ...(schedule.cloud ? { cloud: schedule.cloud } : {}),
         host: schedule.host,
         status: "failed",
         startedAt: new Date().toISOString(),
@@ -492,13 +537,13 @@ function processSchedules(now = new Date()) {
       });
     }
   }
-  if (changed) writeJson(schedulesFile(), schedules);
+  } finally { schedulesProcessing = false; }
 }
 
 function contentType(file) {
   if (file.endsWith(".html")) return "text/html; charset=utf-8";
   if (file.endsWith(".css")) return "text/css; charset=utf-8";
-  if (file.endsWith(".js")) return "text/javascript; charset=utf-8";
+  if (file.endsWith(".js") || file.endsWith(".mjs")) return "text/javascript; charset=utf-8";
   if (file.endsWith(".svg")) return "image/svg+xml";
   if (file.endsWith(".json")) return "application/json; charset=utf-8";
   return "application/octet-stream";
@@ -513,15 +558,38 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === "OPTIONS") return send(response, 204, "");
         if (url.pathname === "/health") return send(response, 200, { status: "ok", product: "vixo-agents", pid: process.pid });
         if (url.pathname.startsWith("/api/") && !authOkay(request, token)) return send(response, 401, { error: "Unauthorized" });
+        if (url.pathname.startsWith('/api/cloud/')) {
+          const route = url.pathname.slice('/api/cloud/'.length);
+          if (request.method === 'GET') {
+            if (route === 'status') return send(response, 200, await cloudStatus());
+            if (route === 'assets') return send(response, 200, await cloudClient().listAssets());
+            if (route === 'workspaces') return send(response, 200, await cloudClient().listWorkspaces());
+            if (route === 'local-agents') return send(response, 200, listAgents());
+          }
+          if (request.method === 'POST') {
+            const input = await bodyJson(request);
+            if (route === 'open-portal') return send(response, 200, await openCloudPortal());
+            if (route === 'pair') return send(response, 200, await cloudClient().pairDevice(input.code));
+            if (route === 'disconnect') return send(response, 200, await cloudClient().signOut());
+            if (route === 'device-code') return send(response, 200, await cloudClient().createDeviceCode());
+            if (route === 'preview-upload') return send(response, 200, await previewLocalPublish(input));
+            if (route === 'publish') return send(response, 200, await commitSourcePreview(input));
+            if (route === 'pull') return send(response, 200, await cloudSync().pullAsset(input.assetId));
+            if (route === 'prepare') return send(response, 200, await cloudSync().prepareAssetRun(input));
+          }
+          return send(response, 404, { error: 'Unknown cloud operation' });
+        }
         if (request.method === "GET" && url.pathname === "/api/state") {
           const update = await checkForUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), ...updateOptions });
-          return send(response, 200, dashboardState(update));
+          return send(response, 200, await dashboardState(update));
         }
         if (request.method === "GET" && url.pathname === "/api/workbench") {
+          const visible = await visibilityFilter();
           return send(response, 200, workbenchState(ensureAgentTeamsRoot(), {
+            visibleRecord: visible,
             period: url.searchParams.get("period") || "today",
-            agents: listAgents().map((summary) => getAgent(summary.id)),
-            schedules: readJson(schedulesFile(), [])
+            agents: await listSourceAgents(),
+            schedules: readJson(schedulesFile(), []).filter(visible)
           }));
         }
         if (url.pathname === "/api/preferences/workbench") {
@@ -530,7 +598,7 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         }
         const runDetail = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
         if (request.method === "GET" && runDetail) {
-          const run = getWorkbenchRun(ensureAgentTeamsRoot(), decodeURIComponent(runDetail[1]));
+          const run = getWorkbenchRun(ensureAgentTeamsRoot(), decodeURIComponent(runDetail[1]), await visibilityFilter());
           return send(response, run ? 200 : 404, run || { error: "Run not found" });
         }
         if (request.method === "POST" && url.pathname === "/api/update/check") {
@@ -546,13 +614,15 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === "POST" && url.pathname === "/api/runs") {
           const body = await bodyJson(request);
           if (body.host === "codex" && body.executionMode === "codex-app") {
-            const prepared = prepareNativeCodexRun(body);
+            const prepared = prepareNativeCodexRun(body, await prepareSourceRun(body, true));
             return send(response, 202, { ...publicRun(prepared.record), nativeLaunch: prepared.nativeLaunch });
           }
-          return send(response, 202, publicRun(startWorkflowRun(body)));
+          return send(response, 202, publicRun(startWorkflowRun(body, await prepareSourceRun(body, true))));
         }
         const nativeResult = url.pathname.match(/^\/api\/runs\/([^/]+)\/native-result$/);
         if (request.method === "POST" && nativeResult) {
+          const record = readJson(runFile(decodeURIComponent(nativeResult[1])), null);
+          if (!record || !(await visibilityFilter())(record)) return send(response, 404, { error: "Run not found" });
           return send(response, 200, publicRun(finishNativeDispatch(decodeURIComponent(nativeResult[1]), await bodyJson(request))));
         }
         const runAction = url.pathname.match(/^\/api\/runs\/([^/]+)\/(approve|reply|reject)$/);
@@ -560,12 +630,16 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
           const id = decodeURIComponent(runAction[1]);
           const action = runAction[2];
           const body = await bodyJson(request);
+          const visibleRun = readJson(runFile(id), null);
+          if (!visibleRun || !(await visibilityFilter())(visibleRun)) return send(response, 404, { error: "Run not found" });
           if (action === "reject") return send(response, 200, publicRun(rejectWorkflowRun(id, body.message)));
+          const existing = readJson(runFile(id), null);
+          if (existing?.cloud?.assetId) await cloudClient().getAsset(existing.cloud.assetId);
           return send(response, 202, publicRun(resumeWorkflowRun(id, { action, message: body.message })));
         }
-        if (request.method === "POST" && url.pathname === "/api/schedules") return send(response, 200, upsertSchedule(await bodyJson(request)));
+        if (request.method === "POST" && url.pathname === "/api/schedules") return send(response, 200, await upsertSchedule(await bodyJson(request)));
         if (request.method === "DELETE" && url.pathname.startsWith("/api/schedules/")) {
-          deleteSchedule(decodeURIComponent(url.pathname.slice("/api/schedules/".length)));
+          await deleteSchedule(decodeURIComponent(url.pathname.slice("/api/schedules/".length)));
           return send(response, 200, { ok: true });
         }
         const relative = url.pathname === "/" ? "index.html" : url.pathname.replace(/^\/+/, "");
@@ -596,8 +670,8 @@ export async function serve({ port = defaultPort, token: restartToken } = {}) {
   const address = server.address();
   const actualPort = typeof address === "object" && address ? address.port : port;
   writeJson(runtimeFile(), { pid: process.pid, port: actualPort, token, url: `http://127.0.0.1:${actualPort}/?token=${token}`, startedAt: new Date().toISOString() });
-  processSchedules();
-  const timer = setInterval(() => processSchedules(), 30_000);
+  processSchedules().catch((error) => process.stderr.write(`${error.message}\n`));
+  const timer = setInterval(() => processSchedules().catch((error) => process.stderr.write(`${error.message}\n`)), 30_000);
   const stop = () => {
     clearInterval(timer);
     try { fs.unlinkSync(runtimeFile()); } catch {}

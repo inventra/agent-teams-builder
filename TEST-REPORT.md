@@ -1,6 +1,23 @@
-# VIXO Agent Teams Builder 1.8.0 測試報告
+# VIXO Agent Teams Builder 1.9.0 測試報告
 
 測試日期：2026-10-08（Asia/Taipei）；下方歷史版本各自保留原驗證範圍。
+
+## v1.9.0 雲端同步驗證
+
+- 本機全套 Node 自動化測試：113 PASS、0 FAIL、1 SKIP；包含 34 項根目錄測試及 79 項 Plugin 測試。SKIP 為原有需 live Codex CDP 的側欄測試。
+- 真實 Supabase HTTP 驗證 12 項通過：裝置配對、一次性碼不可重播、第二裝置同身分、私人隔離、viewer 唯讀、editor 更新、CAS 版本衝突、不可改寫歷史、回復產生新 revision、固定舊版執行準備、移除成員即撤權、匿名拒絕。使用獨立 QA 身分與虛構套件。
+- Migration 001–004 已套用至 VIXO Agent Teams；四份 SQL suites 在隔離 PostgreSQL 通過 101 項斷言，遠端以 rollback suites 再驗證 RLS、RPC、裝置碼與 CAS。`vixo-device-pair` Edge Function 已部署並由 HTTP 測試驗證。
+- 實際 HTTP 測試發現 PostgREST 對 SQLSTATE `40001` 會重試到逾時；004 migration 改用 `PT409`，並確認 HTTP 409 可保留衝突稿、不覆蓋目前版本。
+- 雲端管理頁有 11 項控制器測試；隔離瀏覽器使用合成 API 資料驗證發布、歷史回復、複製、匯出、團隊與換機入口，以及 390px／320px 窄畫面。這些是 UI fixtures，與上述真實 Supabase API 測試分開記錄。
+- Agent、Skill、Workflow 套件保留 SOP／程式資源，排除私人 memory 與執行輸出；驗證路徑可攜性、秘密、快取 hash、固定版本、跨身分隔離與已知撤權後拒絕離線。排程測試涵蓋慢速雲端驗權不重複啟動，並保留既有本地排程來源。
+- 兩位既有本地 Agent 已原樣複製到使用者的私人雲端；逐一核對 SOP 與本地 agent.json 保持一致。私人套件、session、配對碼及遷移記錄均不納入 Git 或安裝包。
+
+### v1.9.0 驗證邊界
+
+- 本版提供雲端儲存、同步、分享、權限與版本；實際工作仍由目前電腦的 Codex／Claude 與本地工具執行，沒有新增全天候雲端運算 worker。排程仍依賴本機服務。
+- 使用裝置配對，未設定 M365 登入或 SMTP。內部 Supabase Auth 身分只用於 session／RLS；沒有另開註冊或寄信介面。
+- Supabase advisor 所列 invites／device_codes「RLS 無 policies」為刻意僅服務端存取；authenticated security-definer RPC 明確檢查身分／角色。未啟用 leaked-password protection；本版不提供密碼登入。這些項目不是零告警掃描結果。參考 [RLS advisories](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy) 與 [password security](https://supabase.com/docs/guides/auth/password-security)。
+- 未實際操作 ERP 實單或以新影片完成模型端到端操作；既有 ERP 影片共用技能與授權界線保留。Windows／macOS CI、GitHub Pages 與安裝包發布狀態以對應 commit 的 Actions／Release 為準。
 
 ## v1.8.0 本機驗證
 

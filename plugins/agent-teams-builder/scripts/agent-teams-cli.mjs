@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureAgentTeamsRoot, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "../src/store.mjs";
 
+import { cloudStatus, listSourceAgents, getSourceAgent, prepareSourceRun } from "../src/cloud-service.mjs";
+
 const command = process.argv[2] || "help";
 const args = process.argv.slice(3);
 
@@ -32,13 +34,13 @@ if (command === "doctor") {
     dashboard: path.join(root, ".system", "dashboard-runtime.json")
   });
 } else if (command === "list") {
-  output({ root: ensureAgentTeamsRoot(), agents: listAgents() });
+  output({ ...(await cloudStatus()), agents: await listSourceAgents() });
 } else if (command === "get") {
-  output(getAgent(args.join(" ")));
+  output(await getSourceAgent(args.join(" ")));
 } else if (command === "prepare") {
-  output(prepareRun({ agent: args[0], task: args.slice(1).join(" ") }));
+  output(await prepareSourceRun({ agent: args[0], task: args.slice(1).join(" ") }));
 } else if (command === "workflow") {
-  output(prepareWorkflowRun({ agent: args[0], workflow: args[1], task: args.slice(2).join(" ") || "執行這個 Workflow" }));
+  output(await prepareSourceRun({ agent: args[0], workflow: args[1], task: args.slice(2).join(" ") || "執行這個 Workflow" }, true));
 } else {
   process.stdout.write("Agent Teams CLI\n\nCommands: doctor | list | get <agent> | prepare <agent> <task> | workflow <agent> <workflow> <task>\n");
 }

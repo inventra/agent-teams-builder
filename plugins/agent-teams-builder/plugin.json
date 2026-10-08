@@ -1,7 +1,7 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "agent-teams-builder",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "description": "Build visible VIXO employee teams with confirmed SOPs, skills, workflows, schedules, and host-native execution.",
   "license": "MIT",
   "extensions": {
@@ -11,7 +11,13 @@
         "shortDescription": "Build visible Agents, Skills, and Workflows.",
         "developerName": "LazyOffice",
         "category": "Productivity",
-        "capabilities": ["Interactive", "Write", "MCP", "Host-native", "Workflow Dashboard"],
+        "capabilities": [
+          "Interactive",
+          "Write",
+          "MCP",
+          "Host-native",
+          "Workflow Dashboard"
+        ],
         "defaultPrompt": [
           "把目前流程建立成 Agent，先讓我確認 SOP。",
           "列出我的 VIXO Agents、Skills 與 Workflows。",

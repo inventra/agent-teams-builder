@@ -1,0 +1,137 @@
+// Shared browser / Node client. Only publishable keys belong in this module's configuration.
+export class CloudError extends Error {
+  constructor(message, { status = 0, code = "cloud_error" } = {}) {
+    super(message); this.name = "CloudError"; this.status = status; this.code = code;
+  }
+}
+
+export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getSession = () => null, saveSession = () => {}, redirectTo } = {}) {
+  const base = new URL(url);
+  if (base.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Cloud URL must use HTTPS");
+  if (!key || String(key).startsWith("sb_secret_")) throw new Error("A Supabase publishable key is required");
+  if (String(key).split('.').length === 3) {
+    let role; try { role = JSON.parse(atob(key.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).role; } catch {}
+    if (role !== 'anon') throw new Error('Only legacy anon or publishable keys are allowed');
+  }
+  const origin = base.origin;
+  let session = getSession() || null;
+  const fingerprint = (value) => JSON.stringify([value?.access_token || null, value?.refresh_token || null]);
+  let storedFingerprint = fingerprint(getSession());
+  let refreshing = null;
+  let generation = 0;
+  const checkGeneration = (started) => { if (started !== generation) throw new CloudError('雲端身分已變更，請重試。', { status: 401, code: 'account_changed' }); };
+  function assertStorage() {
+    if (fingerprint(getSession()) !== storedFingerprint) {
+      generation++; session = null;
+      throw new CloudError('此裝置的雲端身分已變更，請重新整理後再試。', { status: 401, code: 'account_changed' });
+    }
+  }
+  const persist = (value) => { assertStorage(); saveSession(value); storedFingerprint = fingerprint(getSession()); session = value; return value; };
+  const normalize = (value) => ({ ...value, expires_at: value.expires_at || Math.floor(Date.now() / 1000) + (value.expires_in || 3600) });
+  async function raw(route, { method = "GET", body, token } = {}) {
+    let response;
+    try {
+      response = await fetchImpl(`${origin}${route}`, {
+        method, headers: { apikey: key, "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(20000)
+      });
+    } catch { throw new CloudError("無法連線雲端，請檢查網路後重試。", { code: "network_error" }); }
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const code = data?.code || data?.error_code || "cloud_error";
+      const message = data?.message || data?.msg || data?.error_description || data?.error || `Cloud request failed (${response.status})`;
+      const conflict = code === "40001" || String(message).includes("revision_conflict");
+      throw new CloudError(conflict ? "雲端已有新版本。你的修改已保留，請比較後再發布。" : message, { status: conflict ? 409 : response.status, code: conflict ? "revision_conflict" : code });
+    }
+    return data;
+  }
+  async function refresh() {
+    if (!session?.refresh_token) throw new CloudError("請先使用裝置連線碼連接 VIXO 雲端。", { status: 401, code: "login_required" });
+    if (!refreshing) {
+      const started = generation;
+      refreshing = raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: session.refresh_token } })
+        .then((data) => { if (started !== generation) throw new CloudError("登入狀態已變更，請重試。", { status: 401 }); return persist(normalize(data)); })
+        .catch((error) => { if (started === generation && [400, 401, 403].includes(error.status)) persist(null); throw error; })
+        .finally(() => { refreshing = null; });
+    }
+    return refreshing;
+  }
+  async function request(route, options = {}) {
+    assertStorage();
+    const started = generation;
+    if (!session?.access_token) throw new CloudError("請先使用裝置連線碼連接 VIXO 雲端。", { status: 401, code: "login_required" });
+    if (session.expires_at && session.expires_at < Date.now() / 1000 + 60) await refresh();
+    checkGeneration(started);
+    try { const data = await raw(route, { ...options, token: session.access_token }); assertStorage(); checkGeneration(started); return data; }
+    catch (error) {
+      checkGeneration(started);
+      if (error.code === 'account_changed') throw error;
+      if (error.status !== 401 || !session?.refresh_token) throw error;
+      await refresh();
+      checkGeneration(started);
+      const data = await raw(route, { ...options, token: session.access_token }); assertStorage(); checkGeneration(started); return data;
+    }
+  }
+  const rpc = (name, body) => request(`/rest/v1/rpc/${name}`, { method: "POST", body });
+  const table = (name, params) => request(`/rest/v1/${name}?${new URLSearchParams(params)}`);
+  const uuid = (value) => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || "")) throw new Error("Invalid cloud ID"); return value; };
+  return {
+    async pairDevice(code) {
+      assertStorage();
+      const started = generation;
+      const data = await raw('/functions/v1/vixo-device-pair', { method: 'POST', body: { code: String(code).trim() } });
+      if (!data?.access_token || !data?.refresh_token) throw new CloudError('裝置配對未完成。');
+      checkGeneration(started);
+      generation++; persist(normalize(data)); return { user: data.user, session: true };
+    },
+    createDeviceCode() { return rpc('vixo_create_device_code', {}); },
+    async setSession(value) {
+      assertStorage();
+      const started = generation;
+      if (!value?.access_token || !value?.refresh_token) throw new Error("Invalid session");
+      const user = await raw("/auth/v1/user", { token: value.access_token });
+      checkGeneration(started);
+      generation++; persist(normalize({ ...value, user })); return user;
+    },
+    async signOut() {
+      const token = session?.access_token; generation++; persist(null);
+      if (token) await raw("/auth/v1/logout?scope=local", { method: "POST", token });
+      return { ok: true };
+    },
+    async getUser({ allowOfflineCache = false } = {}) {
+      const started = generation;
+      try {
+        const user = await request('/auth/v1/user');
+        checkGeneration(started);
+        persist({ ...session, user: { id: user.id, email: user.email }, user_verified_at: Date.now() });
+        return { id: user.id, email: user.email };
+      } catch (error) {
+        assertStorage();
+        checkGeneration(started);
+        if (allowOfflineCache && error.code === 'network_error' && session?.user_verified_at && session.user?.id && session.expires_at > Date.now() / 1000) return { id: session.user.id, email: session.user.email, offline: true };
+        throw error;
+      }
+    },
+    async listAssets({ workspaceId } = {}) {
+      const params = { select: "id,owner_id,workspace_id,kind,slug,title,description,revision,created_at,updated_at", order: "updated_at.desc", limit: "1000" };
+      if (workspaceId === null) params.workspace_id = "is.null";
+      else if (workspaceId) params.workspace_id = `eq.${uuid(workspaceId)}`;
+      return table("vixo_assets", params);
+    },
+    async getAsset(id) {
+      const rows = await table("vixo_assets", { select: "*", id: `eq.${uuid(id)}` });
+      if (!rows[0]) throw new CloudError("找不到項目，或你已沒有存取權限。", { status: 404, code: "not_found" });
+      return rows[0];
+    },
+    listRevisions(id) { return table("vixo_asset_revisions", { select: "*", asset_id: `eq.${uuid(id)}`, order: "revision.desc", limit: "1000" }); },
+    saveAsset({ id = null, kind, slug, title, description = "", bundle, workspaceId = null, expectedRevision = 0, message = "" }) {
+      return rpc("vixo_save_asset", { p_id: id ? uuid(id) : null, p_kind: kind, p_slug: slug, p_title: title, p_description: description, p_bundle: bundle, p_workspace_id: workspaceId ? uuid(workspaceId) : null, p_expected_revision: expectedRevision, p_message: message });
+    },
+    listWorkspaces() { return table("vixo_workspaces", { select: "*", order: "created_at.asc" }); },
+    createWorkspace(name) { return rpc("vixo_create_workspace", { p_name: name }); },
+    createInvite(workspaceId, role = "viewer") { return rpc("vixo_create_invite", { p_workspace_id: uuid(workspaceId), p_role: role }); },
+    joinWorkspace(code) { return rpc("vixo_join_workspace", { p_code: code }); },
+    listMembers(workspaceId) { return table("vixo_members", { select: "user_id,role", workspace_id: `eq.${uuid(workspaceId)}` }); },
+    removeMember(workspaceId, userId) { return rpc("vixo_remove_member", { p_workspace_id: uuid(workspaceId), p_user_id: uuid(userId) }); }
+  };
+}

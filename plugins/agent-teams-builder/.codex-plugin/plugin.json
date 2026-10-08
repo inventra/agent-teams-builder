@@ -1,7 +1,7 @@
 {
   "name": "agent-teams-builder",
-  "version": "1.8.0",
-  "description": "Build visible VIXO employee teams with confirmed SOPs, skills, workflows, schedules, and host-native execution.",
+  "version": "1.9.0",
+  "description": "Cloud-synchronized VIXO Agents, Skills and Workflows with confirmed SOPs and host-native execution.",
   "author": {
     "name": "LazyOffice"
   },
@@ -9,10 +9,16 @@
   "interface": {
     "displayName": "VIXO Agent Teams Builder",
     "shortDescription": "Build visible Agents, Skills, and Workflows.",
-    "longDescription": "Converts completed sessions into confirmed Agents stored under Downloads/Agent Teams, with memory, multiple skills, visual workflows, Play runs, daily schedules, and execution by the installed Codex or Claude Code host without separate model API calls.",
+    "longDescription": "Connect this Codex device to a private Supabase workspace, sync Agents across devices, share versioned Skills and Workflows with coworkers, and execute with the current host.",
     "developerName": "LazyOffice",
     "category": "Productivity",
-    "capabilities": ["Interactive", "Write", "MCP", "Host-native", "Workflow Dashboard"],
+    "capabilities": [
+      "Interactive",
+      "Write",
+      "MCP",
+      "Host-native",
+      "Workflow Dashboard"
+    ],
     "defaultPrompt": [
       "把目前流程建立成 Agent，先讓我確認 SOP。",
       "列出我的 VIXO Agents、Skills 與 Workflows。",

@@ -40,26 +40,30 @@ export function safeWorkbenchRun(record) {
   return result;
 }
 
-export function allWorkbenchRuns(root) {
+export function allWorkbenchRuns(root, visibleRecord = () => true) {
   const directory = path.join(root, ".system", "runs");
   if (!fs.existsSync(directory)) return [];
   return fs.readdirSync(directory)
     .filter((name) => /^[a-zA-Z0-9-]+\.json$/.test(name))
-    .map((name) => safeWorkbenchRun(readJson(path.join(directory, name), null)))
+    .map((name) => readJson(path.join(directory, name), null))
+    .filter((record) => record && visibleRecord(record))
+    .map(safeWorkbenchRun)
     .filter(Boolean)
     .sort((a, b) => String(b.startedAt).localeCompare(String(a.startedAt)));
 }
 
-export function getWorkbenchRun(root, id) {
+export function getWorkbenchRun(root, id, visibleRecord = () => true) {
   if (!/^[a-zA-Z0-9-]{1,100}$/.test(id)) throw new Error("Invalid run id");
-  const run = safeWorkbenchRun(readJson(path.join(root, ".system", "runs", id + ".json"), null));
+  const record = readJson(path.join(root, ".system", "runs", id + ".json"), null);
+  if (!record || !visibleRecord(record)) return null;
+  const run = safeWorkbenchRun(record);
   if (!run || run.id !== id) return null;
   return run;
 }
 
-export function workbenchState(root, { period = "today", now = new Date(), agents = [], schedules = [] } = {}) {
+export function workbenchState(root, { period = "today", now = new Date(), agents = [], schedules = [], visibleRecord = () => true } = {}) {
   const range = periodBounds(period, now);
-  const all = allWorkbenchRuns(root);
+  const all = allWorkbenchRuns(root, visibleRecord);
   const runs = all.filter((run) => {
     const timestamp = Date.parse(run.startedAt);
     return Number.isFinite(timestamp) && timestamp >= Date.parse(range.start) && timestamp < Date.parse(range.end);

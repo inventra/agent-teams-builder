@@ -115,7 +115,9 @@ fs.mkdirSync(stage, { recursive: true });
 for (const relative of [
   ".agents",
   ".claude-plugin",
+  "cloud",
   "docs",
+  "supabase",
   "Install-Agent-Builder.cmd",
   "Install-Agent-Builder.ps1",
   "install.command",
@@ -124,7 +126,8 @@ for (const relative of [
   "README-安裝說明.md",
   "TEST-REPORT.md",
   "package.json",
-  "scripts/install.mjs"
+  "scripts/install.mjs",
+  "scripts/build-cloud.mjs"
 ]) copy(path.join(root, relative), path.join(stage, relative));
 fs.writeFileSync(path.join(stage, "release-metadata.json"), `${JSON.stringify(sourceMetadata(), null, 2)}\n`, "utf8");
 copy(path.join(root, "plugins", "agent-teams-builder"), path.join(stage, "plugins", "agent-teams-builder"), {

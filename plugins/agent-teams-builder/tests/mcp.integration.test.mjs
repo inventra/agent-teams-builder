@@ -20,7 +20,7 @@ test("MCP stdio handshake and complete preview/commit/list/prepare flow", async 
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "dashboard_open", "workflow_prepare_run"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "cloud_create_device_code", "cloud_create_invite", "cloud_create_workspace", "cloud_list", "cloud_prepare_run", "cloud_preview_publish", "cloud_status", "dashboard_open", "workflow_prepare_run"]);
     const preview = await client.callTool({
       name: "agent_preview",
       arguments: {

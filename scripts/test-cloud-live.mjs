@@ -1,0 +1,46 @@
+// Explicit operator-run integration test against an isolated QA identity.
+// Session files must be outside Git; this script never prints tokens or codes.
+import fs from 'node:fs';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+import { createCloudClient } from '../plugins/agent-teams-builder/web/cloud-client.mjs';
+import { exportSpecBundle } from '../plugins/agent-teams-builder/src/cloud-bundle.mjs';
+import { createCloudSync } from '../plugins/agent-teams-builder/src/cloud-sync.mjs';
+const file = process.env.VIXO_QA_SESSION_FILE;
+if (!file) throw new Error('Set VIXO_QA_SESSION_FILE to an isolated QA identity session file');
+const config = JSON.parse(fs.readFileSync(new URL('../plugins/agent-teams-builder/web/cloud-config.json', import.meta.url), 'utf8'));
+function client(initial = null, save = () => {}) { let session = initial; return createCloudClient({ ...config, getSession: () => session, saveSession: (value) => { session = value; save(value); } }); }
+const owner = client(JSON.parse(fs.readFileSync(file, 'utf8')), (value) => fs.writeFileSync(file, JSON.stringify(value), { mode: 0o600 }));
+const ownerUser = await owner.getUser();
+const device = await owner.createDeviceCode(); const second = client(); await second.pairDevice(device.code);
+assert.equal((await second.getUser()).id, ownerUser.id);
+await assert.rejects(client().pairDevice(device.code));
+const run = Date.now().toString(36);
+const spec = { id: `cloud-check-${run}`, name: '雲端連線驗證', description: '隔離的自動測試資料', triggers: ['驗證'], allowedTools: [], steps: ['讀取測試輸入並整理為一行文字'], successCriteria: ['只回傳測試文字'] };
+const bundle = exportSpecBundle({ kind: 'skill', spec });
+const base = { kind: 'skill', slug: spec.id, title: spec.name, description: spec.description, bundle, expectedRevision: 0 };
+const privateAsset = await owner.saveAsset(base);
+assert.equal((await second.getAsset(privateAsset.id)).revision, 1);
+const workspace = await owner.createWorkspace(`VIXO 自動驗證 ${run}（測試資料）`);
+const team = await owner.saveAsset({ ...base, workspaceId: workspace.id });
+const viewerCode = await owner.createInvite(workspace.id, 'viewer'); const viewer = client(); await viewer.pairDevice(viewerCode.code);
+assert.equal((await viewer.getAsset(team.id)).id, team.id);
+await assert.rejects(viewer.getAsset(privateAsset.id), { status: 404 });
+await assert.rejects(viewer.saveAsset({ ...base, id: team.id, workspaceId: workspace.id, expectedRevision: 1 }));
+const editorCode = await owner.createInvite(workspace.id, 'editor'); const editor = client(); await editor.pairDevice(editorCode.code);
+const updated = await editor.saveAsset({ ...base, id: team.id, workspaceId: workspace.id, expectedRevision: 1, message: 'editor test' });
+assert.equal(updated.revision, 2);
+await assert.rejects(owner.saveAsset({ ...base, id: team.id, workspaceId: workspace.id, expectedRevision: 1 }), { code: 'revision_conflict' });
+const history = await owner.listRevisions(team.id); assert.equal(history.length, 2);
+const restored = await owner.saveAsset({ ...base, id: team.id, workspaceId: workspace.id, expectedRevision: 2, bundle: history.find((item) => item.revision === 1).bundle, message: 'restore test' });
+assert.equal(restored.revision, 3);
+const sync = createCloudSync({ client: second, cloudRoot: path.resolve('output/cloud-verification/qa-cache') });
+const prepared = await sync.prepareAssetRun({ assetId: team.id, revision: 1, task: '驗證雲端程序，不執行外部操作' });
+assert.equal(prepared.cloud.revision, 1); assert.match(prepared.prompt, /測試輸入/);
+const viewerUser = await viewer.getUser(); await owner.removeMember(workspace.id, viewerUser.id);
+await assert.rejects(viewer.getAsset(team.id), { status: 404 });
+const anon = await fetch(`${config.url}/rest/v1/vixo_assets?select=id`, { headers: { apikey: config.key } }); assert.ok([401,403].includes(anon.status));
+await Promise.all([second.signOut(), viewer.signOut(), editor.signOut()]);
+const report = { passed: true, at: new Date().toISOString(), project: new URL(config.url).hostname, qaOwner: ownerUser.id, workspaceId: workspace.id, assertions: ['device pairing', 'one-time code replay rejected', 'second-device identity restored', 'private isolation', 'viewer read only', 'editor update', 'revision conflict', 'immutable history', 'restore as new revision', 'pinned version preparation', 'member revocation', 'anonymous access rejected'] };
+fs.writeFileSync('output/cloud-verification/live-report.json', JSON.stringify(report, null, 2));
+console.log(JSON.stringify(report, null, 2));

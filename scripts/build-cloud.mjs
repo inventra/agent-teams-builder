@@ -1,0 +1,11 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const out = path.join(root, 'output', 'cloud');
+fs.mkdirSync(out, { recursive: true });
+for (const name of ['index.html', 'app.mjs', 'styles.css']) fs.copyFileSync(path.join(root, 'cloud', name), path.join(out, name));
+fs.copyFileSync(path.join(root, 'plugins/agent-teams-builder/web/cloud-client.mjs'), path.join(out, 'cloud-client.mjs'));
+fs.copyFileSync(path.join(root, 'plugins/agent-teams-builder/web/cloud-config.json'), path.join(out, 'config.json'));
+fs.writeFileSync(path.join(out, '.nojekyll'), '');
+console.log('Cloud site built: output/cloud');

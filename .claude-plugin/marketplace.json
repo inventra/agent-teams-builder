@@ -10,8 +10,8 @@
     {
       "name": "agent-teams-builder",
       "source": "./plugins/agent-teams-builder",
-      "description": "Turn completed sessions into reusable local Agents with confirmed SOPs, memory, and multiple skills.",
-      "version": "1.8.0",
+      "description": "Cloud-synchronized VIXO Agents with confirmed SOPs, versioned Skills and team Workflows.",
+      "version": "1.9.0",
       "category": "productivity"
     }
   ]
