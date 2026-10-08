@@ -9,7 +9,6 @@ import { createDashboardServer } from "../plugins/agent-teams-builder/src/dashbo
 import { createPreview, commitPreview, getAgent } from "../plugins/agent-teams-builder/src/store.mjs";
 import { listPublicSkills } from "../plugins/agent-teams-builder/src/public-skills.mjs";
 import { workbenchState } from "../plugins/agent-teams-builder/src/workbench-store.mjs";
-import { M365SyncStore } from "../plugins/agent-teams-builder/src/m365-sync.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(process.env.WORKBENCH_BROWSER_PACKAGE_ROOT ||
@@ -30,7 +29,8 @@ commitPreview({ token: preview.token, userConfirmation: "確認" });
 const fixtureAgent = { ...getAgent("icon-fixture"), id: "legacy:icon-fixture", source: "local", syncMode: "local-only", syncState: "local", assetId: null };
 const fixtureSession = { connected: true, user: { id: "isolated-icon-user", username: "icon_fixture", accountConfigured: true }, access: { userId: "isolated-icon-user", status: "approved", isAdmin: false }, offline: false, source: "hybrid" };
 const fixtureState = { agents: [fixtureAgent], library: [{ id: fixtureAgent.id, kind: "agent", title: fixtureAgent.displayName, syncMode: "local-only", syncState: "local", assetId: null }], publicSkills: listPublicSkills(), sync: { pendingCount: 0, conflictCount: 0 }, hosts: { codex: true, claude: false }, codexProjects: [], runs: [], schedules: [], update: null };
-const fixtureM365 = new M365SyncStore(temporary);
+const optionalM365Module = new URL("../plugins/agent-teams-builder/src/m365-sync.mjs", import.meta.url);
+const fixtureM365 = fs.existsSync(optionalM365Module) ? new (await import(optionalM365Module.href)).M365SyncStore(temporary) : null;
 let preferences = {};
 const { server, token } = createDashboardServer({ token: "isolated-icon-test" });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -51,7 +51,7 @@ await page.route("**/*", (route) => {
   if (url.pathname === "/api/state") return json(fixtureState);
   if (url.pathname === "/api/sync") return json({ state: "idle" });
   if (url.pathname === "/api/workbench") return json(workbenchState(temporary, { agents: [fixtureAgent], schedules: [], period: url.searchParams.get("period") || "today" }));
-  if (url.pathname === "/api/m365/status") return json(fixtureM365.status(fixtureSession.user.id));
+  if (url.pathname === "/api/m365/status" && fixtureM365) return json(fixtureM365.status(fixtureSession.user.id));
   if (url.pathname === "/api/preferences/workbench") {
     if (route.request().method() === "POST") preferences = route.request().postDataJSON();
     return json(preferences);
