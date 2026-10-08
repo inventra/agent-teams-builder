@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCloudController, parseImport, preparePreview, exportAsset, validateBundle, friendlyError, blankBundle, sessionCredentialsChanged } from '../cloud/app.mjs';
+import { createCloudController, parseImport, preparePreview, exportAsset, validateBundle, friendlyError, blankBundle, sessionCredentialsChanged, validateAccountSetup } from '../cloud/app.mjs';
 
 const bundle = () => { const value = blankBundle('agent'); value.spec.displayName = '測試助手'; value.spec.systemPrompt = '先確認任務，再執行。'; value.files[0].content = '# 完整 SOP\n1. 驗證資料'; value.dependencies = [{ kind: 'skill', id: 'erp-video-automation', version: '1.8.0' }]; value.requirements = { platforms: ['windows'], tools: ['Codex'] }; return value; };
 const input = overrides => ({ kind: 'agent', title: '測試助手', slug: 'test-agent', description: '測試', bundle: bundle(), workspaceId: null, ...overrides });
@@ -125,4 +125,26 @@ test('cross-tab handling reloads for token changes but not verification metadata
   assert.equal(sessionCredentialsChanged(session, { ...session, access_token: 'rotated' }), true);
   assert.equal(sessionCredentialsChanged(session, { ...session, refresh_token: 'rotated' }), true);
   assert.equal(sessionCredentialsChanged(null, null), false);
+});
+
+
+test('account setup normalizes allowed usernames and validates password confirmation without creating an identity', () => {
+  const password = 'fixture-only-password';
+  assert.deepEqual(validateAccountSetup(' Test_User-2 ', password, password), { username: 'test_user-2', password });
+  for (const username of ['ab', '9tester', 'test.user', 'test user', '測試帳號', 'a'.repeat(33)]) assert.throws(() => validateAccountSetup(username, password, password), /帳號/);
+  for (const value of ['x'.repeat(11), 'x'.repeat(73), '密'.repeat(25), '😀'.repeat(11)]) assert.throws(() => validateAccountSetup('tester', value, value), /密碼需至少/);
+  assert.equal(validateAccountSetup('tester', '密'.repeat(24), '密'.repeat(24)).password, '密'.repeat(24));
+  assert.equal(validateAccountSetup('tester', ' x'.repeat(12), ' x'.repeat(12)).password, ' x'.repeat(12));
+  assert.throws(() => validateAccountSetup('tester', password, 'different-fixture-password'), /不一致/);
+});
+
+test('account errors distinguish successful binding with unavailable session from retryable setup input errors', () => {
+  for (const code of ['account_bind_in_progress', 'account_bind_unconfirmed']) {
+    assert.match(friendlyError({ code, status: 409 }), /先用剛設定的帳號密碼登入/);
+    assert.doesNotMatch(friendlyError({ code, status: 409 }), /版本/);
+  }
+  assert.equal(friendlyError({ code: 'account_bound_session_unavailable', status: 503 }), '帳號已設定，請用剛設定的帳號密碼登入');
+  assert.match(friendlyError({ code: 'account_already_bound', status: 409 }), /目前身分已設定帳號密碼/);
+  assert.match(friendlyError({ code: 'username_unavailable', status: 409 }), /帳號已被使用/);
+  assert.match(friendlyError({ code: 'invalid_credentials', status: 401 }), /帳號或密碼不正確/);
 });

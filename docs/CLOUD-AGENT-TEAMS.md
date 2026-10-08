@@ -1,6 +1,6 @@
 # VIXO Agent Teams 雲端版本
 
-v1.9.0 將 Agent、Skill、Workflow 的正式版本放在 Supabase。已連線的 VIXO 從雲端查詢、驗證權限並同步指定版本，由目前裝置上的 Codex／Claude 與本地工具執行。換機同步的是角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
+v1.10.0 以 VIXO 帳號密碼作為雲端登入的主要入口，沿用 v1.9.0 的 Supabase Agent、Skill、Workflow 版本與團隊權限。已連線的 VIXO 從雲端查詢、驗證權限並同步指定版本，由目前裝置上的 Codex／Claude 與本地工具執行。換機同步的是角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
 
 ## Git、Supabase 與本地裝置
 
@@ -14,14 +14,24 @@ Git commit 是程式版本；Supabase revision 是每個共享資產的內容版
 
 雲端管理頁位址由 `plugins/agent-teams-builder/web/cloud-config.json` 的 `portalUrl` 指定。前端設定只包含 Supabase 公開 URL／publishable key；service-role key 只留在服務端。發布狀態請以 GitHub Release、Pages deployment 與 Supabase migration／Edge Function 的實際結果為準。
 
-## 第一次連接
+## 帳號設定與登入
 
-使用者不需要另建 VIXO 登入帳號。Supabase 在服務端管理裝置身分與 session；Codex／Claude 仍使用原有登入。
+VIXO 雲端使用自己的帳號密碼；Codex／Claude 仍使用原有宿主登入。帳號為 3–32 個字元，以英文字母開頭，只接受小寫英文字母、數字、底線 `_` 與連字號 `-`；輸入的英文字母會轉成小寫。密碼至少 12 個字元，UTF-8 編碼最多 **72 bytes**；英文字母、數字等 ASCII 字元最多 72 個，中文字與其他非 ASCII 字元會占用更多 bytes。上限依 [Supabase Auth 的密碼驗證](https://github.com/supabase/auth/blob/master/internal/api/password.go)。請直接在登入或設定表單輸入，勿貼到對話、SOP 或共享套件。外掛保存裝置 session，不保存密碼。
 
-1. 安裝 v1.9.0，開新 Session，呼叫 `dashboard_open`，進入「雲端連線」。
-2. 貼上已連線 VIXO 提供的一次性換機碼，或團隊管理者提供的邀請碼。
-3. 連線成功後，呼叫 `cloud_status` 確認 `connected` 與目前身分。
-4. 用 `agent_list` 查看雲端 Agent；用 `cloud_list` 查看有權限讀取的全部 Agent、Skill、Workflow。
+### 已連線的既有裝置
+
+1. 更新至 v1.10.0，開新 Session，呼叫 `dashboard_open`，進入「雲端同步」。
+2. 若尚未設定帳號，選擇「設定帳號密碼」，直接在表單設定。
+3. 設定會綁定目前已連線的身分，保留原有 UUID、私人 Agent、歷史版本與團隊權限；不另外建立一個空白帳號。
+4. 之後在外掛或[雲端管理中心](https://inventra.github.io/agent-teams-builder/)用這組帳號密碼登入。以 `cloud_status` 確認目前身分，`agent_list` 查看 Agent，`cloud_list` 查看全部可存取的 Agent、Skill、Workflow。
+
+### 同仁第一次使用
+
+目前不開放自行註冊。請先取得團隊管理者的邀請碼，在「雲端同步」的進階連線入口完成配對，再設定自己的帳號密碼。這會沿用此次配對取得的身分與團隊權限；不要使用其他人的換機碼加入團隊。已有帳號的同仁可直接登入，再透過「加入團隊」使用邀請碼。
+
+忘記密碼請聯絡管理員；目前沒有寄送重設密碼信或自助重設功能。若另有仍已連線的自己的裝置，可先從該裝置產生短效換機碼連接新裝置。VIXO 不要求 M365、SMTP 或電子郵件驗證。
+
+## 管理者建立首台連線
 
 首台裝置還沒有既有身分，需由專案管理者透過已授權的 Supabase 管理連線建立一次 bootstrap：在本機產生 32 bytes 隨機值，轉為 64 字元 hex 連線碼；僅將它的 SHA-256 hash、`user_id: null` 與短有效期限寫入 `vixo_device_codes`。原始碼只交給首台裝置兌換，不寫入 Git、migration、SQL 歷史、文件或一般日誌。
 
@@ -32,7 +42,7 @@ insert into public.vixo_device_codes (code_hash, user_id, expires_at)
 values ('<SHA256_HEX_FROM_LOCAL>', null, clock_timestamp() + interval '10 minutes');
 ```
 
-Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台身分。bootstrap 過期或已使用就失效；客戶端不能直接建立 bootstrap，也不能指定另一位使用者的身分。之後使用正常換機／團隊邀請流程。管理者 seed 與實際配對是不同步驟，完成 seed 不等於裝置已連線。
+Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台身分，再由已連線使用者設定帳號密碼。bootstrap 過期或已使用就失效；客戶端不能直接建立 bootstrap，也不能指定另一位使用者的身分。之後使用帳密登入或正常換機／團隊邀請流程。管理者 seed 與實際配對是不同步驟，完成 seed 不等於裝置已連線。
 
 ## 把本地訓練成果放到雲端
 
@@ -49,7 +59,7 @@ Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台�
 
 | 需求 | 使用方式 | 身分與權限 |
 | --- | --- | --- |
-| 自己換電腦／瀏覽器 | `cloud_create_device_code`，或「連接另一台裝置」。在新裝置輸入一次性碼。 | 使用相同身分，可讀取同一份私人內容及團隊空間。碼有效 10 分鐘，只能使用一次。 |
+| 自己換電腦／瀏覽器 | 直接以 VIXO 帳號密碼登入；也可用 `cloud_create_device_code` 或「連接另一台裝置」產生一次性碼。 | 使用相同身分，可讀取同一份私人內容及團隊空間。進階換機碼有效 10 分鐘，只能使用一次。 |
 | 分享給同仁 | `cloud_create_workspace` 建立團隊；owner 以 `cloud_create_invite` 產生邀請碼，指定 `viewer`／`editor`。 | 同仁使用自己的身分加入指定團隊，不取得你的私人空間。 |
 | 已連線者加入其他團隊 | 雲端管理頁的「加入團隊」。 | 保留現有身分，新增該團隊 membership。 |
 
@@ -95,6 +105,8 @@ Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台�
 
 ## 管理與維運
 
-資料庫 migration、RLS／RPC 與測試見 [Supabase 說明](../supabase/README.md)。部署時依序套用 migration，部署 `vixo-device-pair`，配置前端公開設定並發布 Pages；service-role 僅保存在 Edge Function 執行環境。GitHub Release 的安裝包要包含同版 cloud client、設定、技能與本地執行程式。
+資料庫 migration、RLS／RPC 與測試見 [Supabase 說明](../supabase/README.md)。部署時依序套用 migration，部署裝置配對與帳號設定／登入所需的 Edge Function，配置前端公開設定並發布 Pages；service-role 僅保存在 Edge Function 執行環境。GitHub Release 的安裝包要包含同版 cloud client、設定、技能與本地執行程式。
 
-驗收至少涵蓋：A 裝置發布完整 Agent → B 裝置換機碼同步同一版本 → 同仁以 viewer 使用但無法覆寫 → editor 新增版本 → 舊版本回復產生新 revision → 移除成員後不能再下載或續跑。測試使用獨立虛構資料，不以測試成功代替真實 ERP 的操作驗證。
+帳號回歸至少涵蓋：既有已配對身分設定帳密後 UUID、Agent 資產 ID 與 revision 保持不變；新裝置帳密登入可讀到同一內容；錯誤登入不取代目前 session；並發刷新與切換帳號不能讓舊回應覆寫新 session，舊帳號的列表、預覽、執行紀錄及排程不顯示在新帳號下。並發綁定不能把同一身分改綁另一個帳號。
+
+共享驗收至少涵蓋：A 裝置發布完整 Agent → B 裝置帳密登入或換機碼同步同一版本 → 同仁以 viewer 使用但無法覆寫 → editor 新增版本 → 舊版本回復產生新 revision → 移除成員後不能再下載或續跑。測試使用獨立虛構資料，不以測試成功代替真實 ERP 的操作驗證。

@@ -21,4 +21,6 @@ description: 建立或修改 VIXO Agent。使用者說建立或修改 Agent、�
 
 若需求是把既有本地員工或其中一項 Skill／Workflow 分享到雲端，使用 `cloud_preview_publish` → 展示完整內容 → 使用者明確確認 → `agent_commit`；沿用同一次內容確認，不另加不必要的核准流程。
 
+使用者要求連接雲端時，呼叫 `dashboard_open`，引導至「雲端同步」的 VIXO 帳號密碼表單；不要在對話或 Agent 定義中索取、保存密碼。原本已連線但未設定帳號的裝置選「設定帳號密碼」，沿用目前 UUID 與 Agent；首次加入的同仁先以團隊邀請碼配對再設定帳號。沒有公開註冊；忘記密碼請聯絡管理員，不宣稱已提供寄信重設。Codex／Claude 宿主登入與 VIXO 雲端登入是分開的狀態。
+
 共享套件下載後由本地宿主執行。它不攜帶外部 OAuth、ERP 登入或其他人的操作權限。既有 VIXO 共用影片判斷與 `erp-video-automation` 路由仍適用，不需為每位員工增加私人同名 Skill。

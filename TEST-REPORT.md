@@ -1,6 +1,20 @@
-# VIXO Agent Teams Builder 1.9.0 測試報告
+# VIXO Agent Teams Builder 1.10.0 測試報告
 
 測試日期：2026-10-08（Asia/Taipei）；下方歷史版本各自保留原驗證範圍。
+
+## v1.10.0 帳號密碼驗證
+
+- 本機全套 Node 測試：138 PASS、0 FAIL、1 SKIP（根目錄 53、Plugin 85 通過；原有 live Codex CDP 測試維持 SKIP）。包含帳號設定驗證、原 UUID 保留、無明文密碼持久化、登入失敗與晚回應的 session 隔離。
+- 真實 Supabase HTTP 的 12 項帳密檢查通過：既有 QA 身分綁定及新裝置登入、私人資產 ID／revision 保留、錯誤密碼不取代 session、拒絕再次綁定、匿名與指定其他 user ID 拒絕、受邀同仁、重複帳號拒絕後可設定其他名稱、同一身分並行設定僅一次成功。只使用隔離 QA 帳號，不替使用者設定或讀取密碼。
+- 005 migration 與 `vixo-account` Edge Function 已部署；新 SQL suite 的 24 項斷言在本機及遠端 rollback 交易通過。五份 SQL suites 共 125 項斷言，並以兩條本地 PostgreSQL 連線驗證同 UUID／同帳號的並行衝突。
+- 網站與本地表單的隔離瀏覽器回歸通過：帳密主入口、原身分設定、送出後清空密碼、部分成功提示、進階裝置碼、跨頁／延遲回應隔離、發布、回復、共享與手機版。UI fixtures 與真實 Supabase API 測試分別執行。
+- 真實 API 測試發現 Auth 的 `code` 為數值 HTTP 狀態、`error_code` 才是語意錯誤；已修正登入與帳號設定的錯誤處理，並加入相同回應形狀的回歸。
+
+### v1.10.0 驗證邊界
+
+- 第一次須在已連線的外掛設定帳密，保留原 UUID；使用者自行輸入，發布流程不替真實使用者建立密碼。新同仁經團隊邀請加入後設定自己的帳密。
+- 未設定 SMTP／M365，也沒有寄信重設密碼；帳密驗證與雜湊由 Supabase Auth 處理。成功或結果不確定的設定保留服務端 claim，避免重試覆寫密碼。
+- GitHub Actions、Pages、發行檔及安裝後讀回以本版 commit 的發布記錄為準。Agent／ERP 執行仍在本機宿主，既有 SOP 與影片路由保持原行為。
 
 ## v1.9.0 雲端同步驗證
 

@@ -569,6 +569,8 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
           if (request.method === 'POST') {
             const input = await bodyJson(request);
             if (route === 'open-portal') return send(response, 200, await openCloudPortal());
+            if (route === 'login') return send(response, 200, await cloudClient().signInWithPassword({ username: input.username, password: input.password }));
+            if (route === 'setup-account') return send(response, 200, await cloudClient().setupAccount({ username: input.username, password: input.password }));
             if (route === 'pair') return send(response, 200, await cloudClient().pairDevice(input.code));
             if (route === 'disconnect') return send(response, 200, await cloudClient().signOut());
             if (route === 'device-code') return send(response, 200, await cloudClient().createDeviceCode());
@@ -653,7 +655,7 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         });
         fs.createReadStream(file).pipe(response);
       } catch (error) {
-        send(response, 400, { error: error instanceof Error ? error.message : String(error) });
+        send(response, [400, 401, 403, 404, 409, 429, 503].includes(error?.status) ? error.status : 400, { error: error instanceof Error ? error.message : String(error), ...(error?.code ? { code: error.code } : {}) });
       }
     })
   };

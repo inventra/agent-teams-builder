@@ -6,13 +6,27 @@ export function sessionCredentialsChanged(previous, next) {
   return (previous?.access_token || null) !== (next?.access_token || null) || (previous?.refresh_token || null) !== (next?.refresh_token || null);
 }
 
+export function validateAccountSetup(username, password, confirmation) {
+  const normalized = String(username || '').trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]{2,31}$/.test(normalized)) throw new Error('帳號需為 3–32 個小寫英文字母、數字、底線或連字號，且以英文字母開頭。');
+  if (typeof password !== 'string' || [...password].length < 12 || new TextEncoder().encode(password).length > 72) throw new Error('密碼需至少 12 個字元；過長時請縮短密碼，中文字元佔較多長度。');
+  if (password !== confirmation) throw new Error('兩次輸入的密碼不一致，請重新確認。');
+  return { username: normalized, password };
+}
+
 export function friendlyError(error) {
   const code = String(error?.code || '');
+  if (['account_bind_in_progress', 'account_bind_unconfirmed'].includes(code)) return '帳號設定正在處理或結果待確認。請先用剛設定的帳號密碼登入；若仍無法登入，請聯絡管理員，勿重複設定。';
+  if (code === 'account_bound_session_unavailable') return '帳號已設定，請用剛設定的帳號密碼登入';
+  if (code === 'account_already_bound') return '目前身分已設定帳號密碼，請使用原有帳號登入。';
+  if (code === 'username_unavailable') return '這個帳號已被使用，請設定其他帳號。';
+  if (/invalid.*credentials|invalid login|帳號或密碼/i.test(code + ' ' + error?.message)) return '帳號或密碼不正確，請再確認一次。';
+  if (/username.*taken|account.*exists/i.test(code + ' ' + error?.message)) return '這個帳號已被使用，請設定其他帳號。';
   if (code === 'revision_conflict' || error?.status === 409) return '雲端已有較新的版本。請關閉預覽、重新整理內容後再更新，避免覆蓋同仁的修改。';
   if (/invalid.*code|expired.*code|code.*expired|code.*invalid/i.test(code + ' ' + error?.message)) return '連線碼無效、已使用或已過期，請向已連線的 VIXO 取得新碼。';
   if (/already.*exist|duplicate|23505/i.test(code + ' ' + error?.message)) return '這個空間已有相同識別名稱，請使用其他名稱。';
   if (/rate.limit|too.many/i.test(code + ' ' + error?.message)) return '操作次數較多，請稍候再試。';
-  if (/expired|jwt|session|refresh_token/i.test(code) || error?.status === 401) return '裝置連線已過期，請重新輸入連線碼。';
+  if (/expired|jwt|session|refresh_token/i.test(code) || error?.status === 401) return '登入已過期，請重新使用帳號密碼登入。';
   if (error?.status === 403 || /permission|row.level|42501/i.test(code + ' ' + error?.message)) return '目前裝置身分沒有這項操作的權限，請向團隊管理者確認。';
   if (/failed to fetch|network|load failed/i.test(error?.message || '')) return '無法連上雲端，請確認網路後再試。';
   if (/^[\x20-\x7e\s]+$/.test(error?.message || '')) return '操作未完成，請稍後再試或確認輸入內容。' + (code ? `（${code}）` : '');
@@ -249,28 +263,45 @@ export async function boot() {
 
   function renderAuth() {
     account.replaceChildren();
-    const pairing = element('input', { id: 'device-code', name: 'device-code', type: 'text', placeholder: '貼上 VIXO 提供的連線碼', required: true, autocomplete: 'off', spellcheck: false, maxLength: 200 });
+    const username = element('input', { id: 'login-account', name: 'username', type: 'text', placeholder: '你的 VIXO 帳號', required: true, autocomplete: 'username', autocapitalize: 'none', spellcheck: false, maxLength: 32 });
+    const password = element('input', { id: 'login-password', name: 'password', type: 'password', placeholder: '請輸入密碼', required: true, autocomplete: 'current-password', maxLength: 72 });
     const status = element('p', { class: 'inline-error', role: 'alert' });
-    const submit = element('button', { type: 'submit', class: 'primary', text: '連接雲端工作室' });
+    const submit = element('button', { type: 'submit', class: 'primary', text: '登入工作室' });
     const form = element('form', { onsubmit: async event => {
       event.preventDefault();
       if (busy) return;
+      const credentials = { username: username.value.trim().toLowerCase(), password: password.value };
+      password.value = '';
       busy = true; submit.disabled = true; status.textContent = ''; announce('');
       try {
-        await client.pairDevice(pairing.value.trim());
-        pairing.value = '';
-        if (await controller.initialize()) { renderApp(); announce('此裝置已連線，雲端內容已載入。'); }
-        else throw new Error('尚未取得有效的裝置連線，請重新輸入連線碼。');
+        await client.signInWithPassword(credentials);
+        if (await controller.initialize()) { renderApp(); announce('已登入，原有雲端內容已載入。'); }
+        else throw new Error('尚未完成登入，請重新確認帳號密碼。');
       } catch (error) { status.textContent = friendlyError(error); }
       finally { busy = false; submit.disabled = false; }
-    } }, [field('一次性裝置連線碼／團隊邀請碼', pairing, '從已連線的 VIXO 取得換機碼，或向團隊管理員取得邀請碼。'), status, submit]);
-    main.replaceChildren(element('div', { class: 'auth-layout' }, [element('section', { class: 'auth-intro' }, [element('span', { class: 'eyebrow', text: 'Your team. Everywhere.' }), element('h1', {}, ['你的 Agent，', element('br'), '走到哪都在。']), element('p', { text: '讓角色、技能與工作流程住進雲端。換一台電腦繼續工作，也把累積的經驗分享給團隊。' }), element('div', { class: 'hero-labels' }, [element('span', { text: '↗ 跨裝置同步' }), element('span', { text: '◇ 團隊共享' }), element('span', { text: '↺ 版本保留' })])]), element('section', { class: 'auth-card', 'aria-label': '裝置連線' }, [element('h2', { text: '連接你的 VIXO' }), element('p', { class: 'muted small-text', text: '用一次性連線碼開啟工作室，不需要另建登入帳號。' }), form, element('p', { class: 'help-text', text: '裝置連線碼讓你在另一台電腦取得同一份私人內容；團隊邀請碼則會以新的裝置身分加入指定團隊。' }), element('p', { class: 'help-text', text: '雲端保存與分享資產；ERP 與裝置操作，仍由具備環境的本地 VIXO 執行。' })]) ]));
+    } }, [field('帳號', username), field('密碼', password), status, submit]);
+    const pairing = element('input', { id: 'device-code', name: 'device-code', type: 'text', placeholder: '貼上既有裝置碼或團隊邀請碼', required: true, autocomplete: 'off', spellcheck: false, maxLength: 200 });
+    const pairStatus = element('p', { class: 'inline-error', role: 'alert' });
+    const pairSubmit = element('button', { type: 'submit', text: '使用連線碼' });
+    const pairForm = element('form', { onsubmit: async event => {
+      event.preventDefault();
+      if (busy) return;
+      const value = pairing.value.trim(); pairing.value = '';
+      busy = true; pairSubmit.disabled = true; pairStatus.textContent = '';
+      try {
+        await client.pairDevice(value);
+        if (await controller.initialize()) { renderApp(); announce('已連接原有雲端身分。可設定帳號密碼，之後直接登入。'); }
+        else throw new Error('尚未完成裝置連線，請重新確認連線碼。');
+      } catch (error) { pairStatus.textContent = friendlyError(error); }
+      finally { busy = false; pairSubmit.disabled = false; }
+    } }, [field('一次性裝置連線碼／團隊邀請碼', pairing), pairStatus, pairSubmit]);
+    main.replaceChildren(element('div', { class: 'auth-layout' }, [element('section', { class: 'auth-intro' }, [element('span', { class: 'eyebrow', text: 'Your team. Everywhere.' }), element('h1', {}, ['你的 Agent，', element('br'), '走到哪都在。']), element('p', { text: '使用同一組帳號密碼，接續你的角色、技能與工作流程，也把累積的經驗分享給團隊。' }), element('div', { class: 'hero-labels' }, [element('span', { text: '↗ 跨裝置同步' }), element('span', { text: '◇ 團隊共享' }), element('span', { text: '↺ 版本保留' })])]), element('section', { class: 'auth-card', 'aria-label': '帳號登入' }, [element('h2', { text: '登入 VIXO' }), element('p', { class: 'muted small-text', text: '輸入你在 VIXO 設定的帳號密碼。' }), form, element('div', { class: 'first-account-note' }, [element('strong', { text: '第一次使用帳號登入？' }), element('p', { text: '請先回到已連線、保有原本 Agent 的 VIXO 外掛，在「雲端連線」設定帳號密碼，再回到這裡登入。原有資產與團隊權限會保留。' })]), element('p', { class: 'help-text', text: '忘記密碼時，請向管理員確認恢復方式，並保留仍可使用的已連線裝置。' }), element('details', { class: 'advanced-auth' }, [element('summary', { text: '進階：使用裝置碼或團隊邀請碼' }), element('p', { class: 'help-text', text: '既有裝置換機碼沿用同一身分；受邀同仁可用團隊邀請碼加入，再為自己的身分設定帳號密碼。' }), pairForm]), element('p', { class: 'help-text', text: '雲端保存與分享資產；ERP 與裝置操作，仍由具備環境的本地 VIXO 執行。' })]) ]));
   }
 
   function renderApp() {
     if (!controller.state.user) { renderAuth(); return; }
     const state = controller.state;
-    account.replaceChildren(element('span', { class: 'email', text: !state.user.email || state.user.email.endsWith('@devices.vixo.invalid') ? '已連線的 VIXO 裝置' : state.user.email }), button('連接另一台裝置', () => attempt(openDeviceCode), 'small'), button('中斷此裝置連線', () => attempt(async () => { await controller.clear(); closeModal(); try { await client.signOut(); } finally { stored = null; try { localStorage.removeItem(SESSION_KEY); } catch {} renderAuth(); announce('此裝置已中斷連線。'); } }), 'quiet small'));
+    account.replaceChildren(element('span', { class: 'email', text: state.user.username || '已連線的 VIXO 裝置' }), ...(!state.user.accountConfigured ? [button('設定帳號密碼', openSetupAccount, 'small')] : []), button('登出此裝置', () => attempt(async () => { await controller.clear(); closeModal(); try { await client.signOut(); } finally { stored = null; try { localStorage.removeItem(SESSION_KEY); } catch {} renderAuth(); announce('已登出此裝置。'); } }), 'quiet small'));
     const scope = scopeSelect('workspace-select');
     scope.className = 'workspace-select'; scope.setAttribute('aria-label', '選擇工作空間');
     scope.addEventListener('change', () => attempt(async () => { closeModal(); await controller.chooseScope(scope.value); renderApp(); }));
@@ -280,8 +311,9 @@ export async function boot() {
       item.setAttribute('aria-current', kind === key ? 'page' : 'false');
       item.append(element('span', { class: 'nav-icon', text: type.icon, 'aria-hidden': 'true' }), element('span', { text: type.label }), element('span', { class: 'nav-count', text: String(state.assets.filter(a => a.kind === key).length) })); nav.append(item);
     }
-    const sidebar = element('aside', { class: 'sidebar' }, [element('div', {}, [element('p', { class: 'side-heading', text: 'Workspace' }), element('div', { class: 'scope-top' }, [scope, element('div', { class: 'scope-actions' }, [button('＋ 建立團隊', openCreateWorkspace), button('加入團隊', openJoinWorkspace)])])]), element('div', {}, [element('p', { class: 'side-heading', text: 'My collection' }), nav]), state.scope ? button('成員與邀請', () => attempt(openMembers), 'small') : null, element('div', { class: 'sidebar-note' }, [element('strong', { text: '雲端管理，本地執行' }), '在這裡整理與分享資產，再由各裝置的 VIXO 同步下載後執行。', element('br'), element('a', { href: 'https://github.com/inventra/agent-teams-builder/releases/latest', target: '_blank', rel: 'noopener noreferrer', text: '取得本地 VIXO ↗' })])]);
+    const sidebar = element('aside', { class: 'sidebar' }, [element('div', {}, [element('p', { class: 'side-heading', text: 'Workspace' }), element('div', { class: 'scope-top' }, [scope, element('div', { class: 'scope-actions' }, [button('＋ 建立團隊', openCreateWorkspace), button('加入團隊', openJoinWorkspace)])])]), element('div', {}, [element('p', { class: 'side-heading', text: 'My collection' }), nav]), state.scope ? button('成員與邀請', () => attempt(openMembers), 'small') : null, element('div', { class: 'sidebar-note' }, [element('strong', { text: '雲端管理，本地執行' }), '在這裡整理與分享資產，再由各裝置的 VIXO 同步下載後執行。', element('br'), element('a', { href: 'https://github.com/inventra/agent-teams-builder/releases/latest', target: '_blank', rel: 'noopener noreferrer', text: '取得本地 VIXO ↗' }), element('details', { class: 'advanced-auth' }, [element('summary', { text: '進階裝置連線' }), button('產生一次性換機碼', () => attempt(openDeviceCode), 'small')])])]);
     const content = element('section', { class: 'workspace-main', 'aria-label': '工作室內容' });
+    if (!state.user.accountConfigured) content.append(element('div', { class: 'account-setup-banner' }, [element('div', {}, [element('strong', { text: '讓這份資料可以用帳號密碼登入' }), element('p', { text: '目前內容已連線。設定登入方式後，可在網站或新裝置使用同一份 Agent 與團隊權限。' })]), button('設定帳號密碼', openSetupAccount, 'primary')]));
     if (state.selected) renderDetail(content, state.selected); else renderCollection(content);
     main.replaceChildren(element('div', { class: 'workspace-layout' }, [sidebar, content]));
   }
@@ -424,6 +456,36 @@ export async function boot() {
       finally { submit.disabled = false; }
     }, 'primary');
     showModal(title, [...fields.map(item => field(item.label, item.control, item.help)), error], [button('取消', closeModal), submit]);
+  }
+  function openSetupAccount() {
+    const originalUserId = controller.state.user?.id;
+    if (!originalUserId) return;
+    const username = element('input', { id: 'setup-account', type: 'text', required: true, autocomplete: 'username', autocapitalize: 'none', spellcheck: false, minLength: 3, maxLength: 32, placeholder: '例如：kaikai_wu' });
+    const password = element('input', { id: 'setup-password', type: 'password', required: true, autocomplete: 'new-password', minLength: 12, maxLength: 72 });
+    const confirmation = element('input', { id: 'setup-password-confirm', type: 'password', required: true, autocomplete: 'new-password', minLength: 12, maxLength: 72 });
+    simpleForm('設定目前身分的帳號密碼', [
+      { label: '設定帳號', control: username, help: '3–32 個小寫英文、數字、_ 或 -，以英文字母開頭。' },
+      { label: '設定密碼', control: password, help: '至少 12 個字元，建議使用英文字母、數字與符號。這項設定保留目前的 Agent、資產與團隊權限。' },
+      { label: '再次輸入密碼', control: confirmation },
+    ], '儲存帳號密碼', async () => {
+      const started = modalGeneration;
+      const credentials = validateAccountSetup(username.value, password.value, confirmation.value);
+      password.value = ''; confirmation.value = '';
+      try { await client.setupAccount(credentials); }
+      catch (error) {
+        if (error.code !== 'account_bound_session_unavailable') throw error;
+        if (started !== modalGeneration || controller.state.user?.id !== originalUserId) return false;
+        // Credentials were saved. Preserve the existing session and offer login,
+        // rather than repeating a successful one-time account binding.
+        closeModal(); renderAuth(); announce(friendlyError(error));
+        return false;
+      }
+      const user = await client.getUser();
+      if (started !== modalGeneration) return false;
+      if (user?.id !== originalUserId || controller.state.user?.id !== originalUserId) throw new Error('雲端身分已變更，請重新整理後確認。');
+      controller.state.user = user;
+      renderApp(); announce('帳號密碼已設定，原有資產與權限已保留。之後可直接使用帳號密碼登入。');
+    });
   }
   async function openDeviceCode() {
     const userId = controller.state.user?.id;

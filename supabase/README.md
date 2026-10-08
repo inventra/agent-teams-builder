@@ -1,10 +1,14 @@
 # VIXO 雲端資料與權限
 
-這裡提供 migration、SQL 回滾測試與裝置配對 Edge Function。SQL 測試只使用交易內的虛構資料並回滾，不寄信；Edge Function 在有效配對碼兌換時建立或恢復內部 Auth 身分。第一版以 Codex 外掛搭配配對碼連到雲端，不要求使用者操作登入或 M365。
+這裡提供 migration、SQL 回滾測試、裝置配對與帳號設定 Edge Functions。SQL 測試只使用交易內的虛構資料並回滾，不寄信。v1.10.0 以自訂帳號與密碼登入；既有使用者先在已連線的外掛設定一次，保留原 Auth UUID、私人資產與團隊權限。新同仁先兌換團隊邀請，再設定帳密；換機之後直接登入。
 
 依序套用 `migrations/202610080001_vixo_cloud.sql`、`migrations/202610080002_vixo_device_pairing.sql`、`migrations/202610080003_vixo_runtime_hardening.sql`、`migrations/202610080004_vixo_cas_http_conflict.sql`。使用具備建立 schema／function／policy 權限的 migration 身份；第二檔需要 Supabase 既有的 `auth.role()` 與 `service_role`。`vixo_private` 不加入 PostgREST exposed schemas；公開 API 在 `public`。第三檔是 forward migration：使用即時時鐘核對 capability 到期、限制 file 驗證成本，並在既有 `public.rls_auto_enable` 確實為 event-trigger function 時收回客戶端 EXECUTE，保留 event trigger。第四檔只將業務 CAS 衝突改用自訂 HTTP SQLSTATE `PT409`，保留鎖行、版本與 ACL。
 
 ## 存取與版本契約
+
+v1.10.0 另套用 `migrations/202610080005_vixo_account_binding.sql`，部署 `functions/vixo-account/index.ts` 與 `handler.mjs`。此端點自行透過 Auth `/user` 驗證 Bearer token，只能將同一個尚未設定帳號的裝置身分綁定一次，拒絕用戶傳入 user ID。005 的 service-only claim 會跨 Edge instances 鎖定同一 UUID 與帳號；成功或結果不確定時保留 claim，防止重新設定覆寫密碼。`vixo-device-pair` 保留供邀請與進階裝置連線。
+
+帳號為 3–32 個小寫 ASCII 字母、數字、底線或連字號，以字母開頭；以 `${username}@accounts.vixo.invalid` 作為 Auth 內部識別。密碼至少 12 個 Unicode 字元且最多 72 UTF-8 bytes，交由 Supabase Auth 雜湊儲存；應用程式只保存 session，不保存密碼。沒有公開註冊介面，也沒有寄信或 Email 重設密碼流程。005 的 `vixo_account_bind_claims` 不含密碼，僅 service role 可讀，客戶端不能直接讀寫或呼叫 claim RPC。
 
 - `vixo_workspaces`、`vixo_members`、`vixo_assets`、`vixo_asset_revisions` 只授 `authenticated` SELECT。所有客戶端寫入經 security definer RPC，固定空 `search_path` 並由 `auth.uid()` 取得身份；匿名不具有表格讀寫或 RPC 執行權限。
 - 私人資產僅 owner 可讀寫；團隊成員可讀，owner／editor 可儲存，viewer 無寫入權限。團隊權限依當下 membership，原建立者被移除也不能讀寫原團隊資產。membership 的私有 helper 避免遞迴 RLS。
@@ -38,6 +42,7 @@ psql -X -v ON_ERROR_STOP=1 -f supabase/tests/rls-rpc.sql
 psql -X -v ON_ERROR_STOP=1 -f supabase/tests/device-pairing.sql
 psql -X -v ON_ERROR_STOP=1 -f supabase/tests/runtime-hardening.sql
 psql -X -v ON_ERROR_STOP=1 -f supabase/tests/cas-http-conflict.sql
+psql -X -v ON_ERROR_STOP=1 -f supabase/tests/account-binding.sql
 ```
 
-`tests/local-bootstrap.sql` **只給一次性的本機 PostgreSQL cluster**，模擬 Supabase auth schema／角色與寬鬆的 public 預設授權。不能套用到 Supabase；在本機依序執行 bootstrap、四個 migrations、四份回滾測試。回滾測試都是純 SQL，可直接交給 SQL Editor 或 Supabase execute，保留 BEGIN／ROLLBACK 與全部斷言。
+`tests/local-bootstrap.sql` **只給一次性的本機 PostgreSQL cluster**，模擬 Supabase auth schema／角色與寬鬆的 public 預設授權。不能套用到 Supabase；在本機依序執行 bootstrap、五個 migrations、五份回滾測試。回滾測試都是純 SQL，可直接交給 SQL Editor 或 Supabase execute，保留 BEGIN／ROLLBACK 與全部斷言。

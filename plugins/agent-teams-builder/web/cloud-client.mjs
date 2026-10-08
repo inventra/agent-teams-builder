@@ -5,6 +5,17 @@ export class CloudError extends Error {
   }
 }
 
+export function normalizeUsername(value) {
+  const username = String(value || '').trim().toLowerCase();
+  if (!/^[a-z][a-z0-9_-]{2,31}$/.test(username)) throw new CloudError('帳號需以英文字母開頭，使用 3–32 個英文字母、數字、底線或連字號。', { code: 'invalid_username' });
+  return username;
+}
+function publicUser(user) {
+  const name = user?.app_metadata?.vixo_username || user?.username;
+  const configured = typeof name === 'string' && /^[a-z][a-z0-9_-]{2,31}$/.test(name) && user?.email === `${name}@accounts.vixo.invalid`;
+  return { id: user?.id, email: user?.email, username: configured ? name : null, accountConfigured: configured };
+}
+
 export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getSession = () => null, saveSession = () => {}, redirectTo } = {}) {
   const base = new URL(url);
   if (base.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(base.hostname)) throw new Error("Cloud URL must use HTTPS");
@@ -27,7 +38,13 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     }
   }
   const persist = (value) => { assertStorage(); saveSession(value); storedFingerprint = fingerprint(getSession()); session = value; return value; };
-  const normalize = (value) => ({ ...value, expires_at: value.expires_at || Math.floor(Date.now() / 1000) + (value.expires_in || 3600) });
+  const normalize = (value) => ({ access_token: value.access_token, refresh_token: value.refresh_token, token_type: value.token_type || 'bearer', expires_in: value.expires_in || 3600, expires_at: value.expires_at || Math.floor(Date.now() / 1000) + (value.expires_in || 3600), ...(value.user ? { user: publicUser(value.user) } : {}) });
+  function adopt(data, started) {
+    if (!data?.access_token || !data?.refresh_token) throw new CloudError('尚未取得有效的登入狀態。');
+    checkGeneration(started); assertStorage();
+    generation++; persist(normalize(data));
+    return { user: publicUser(data.user), session: true };
+  }
   async function raw(route, { method = "GET", body, token } = {}) {
     let response;
     try {
@@ -38,7 +55,7 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     } catch { throw new CloudError("無法連線雲端，請檢查網路後重試。", { code: "network_error" }); }
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      const code = data?.code || data?.error_code || "cloud_error";
+      const code = (typeof data?.code === 'string' && data.code) || data?.error_code || "cloud_error";
       const message = data?.message || data?.msg || data?.error_description || data?.error || `Cloud request failed (${response.status})`;
       const conflict = code === "40001" || String(message).includes("revision_conflict");
       throw new CloudError(conflict ? "雲端已有新版本。你的修改已保留，請比較後再發布。" : message, { status: conflict ? 409 : response.status, code: conflict ? "revision_conflict" : code });
@@ -46,7 +63,7 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     return data;
   }
   async function refresh() {
-    if (!session?.refresh_token) throw new CloudError("請先使用裝置連線碼連接 VIXO 雲端。", { status: 401, code: "login_required" });
+    if (!session?.refresh_token) throw new CloudError("請先登入 VIXO 雲端。", { status: 401, code: "login_required" });
     if (!refreshing) {
       const started = generation;
       refreshing = raw("/auth/v1/token?grant_type=refresh_token", { method: "POST", body: { refresh_token: session.refresh_token } })
@@ -59,14 +76,14 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
   async function request(route, options = {}) {
     assertStorage();
     const started = generation;
-    if (!session?.access_token) throw new CloudError("請先使用裝置連線碼連接 VIXO 雲端。", { status: 401, code: "login_required" });
+    if (!session?.access_token) throw new CloudError("請先登入 VIXO 雲端。", { status: 401, code: "login_required" });
     if (session.expires_at && session.expires_at < Date.now() / 1000 + 60) await refresh();
     checkGeneration(started);
     try { const data = await raw(route, { ...options, token: session.access_token }); assertStorage(); checkGeneration(started); return data; }
     catch (error) {
       checkGeneration(started);
       if (error.code === 'account_changed') throw error;
-      if (error.status !== 401 || !session?.refresh_token) throw error;
+      if (options.retryAuth === false || error.status !== 401 || !session?.refresh_token) throw error;
       await refresh();
       checkGeneration(started);
       const data = await raw(route, { ...options, token: session.access_token }); assertStorage(); checkGeneration(started); return data;
@@ -76,13 +93,36 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
   const table = (name, params) => request(`/rest/v1/${name}?${new URLSearchParams(params)}`);
   const uuid = (value) => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || "")) throw new Error("Invalid cloud ID"); return value; };
   return {
+    async signInWithPassword({ username, password } = {}) {
+      assertStorage(); const started = generation;
+      const name = normalizeUsername(username);
+      if (typeof password !== 'string' || !password || new TextEncoder().encode(password).length > 72) throw new CloudError('請輸入有效的帳號與密碼。', { code: 'invalid_credentials' });
+      let data;
+      try { data = await raw('/auth/v1/token?grant_type=password', { method: 'POST', body: { email: `${name}@accounts.vixo.invalid`, password } }); }
+      catch (error) {
+        if (['invalid_credentials', 'email_not_confirmed', 'user_banned'].includes(error.code)) throw new CloudError('帳號或密碼不正確，請重新輸入。', { status: 401, code: 'invalid_credentials' });
+        throw error;
+      }
+      if (!publicUser(data?.user).accountConfigured) throw new CloudError('帳號或密碼不正確，請重新輸入。', { status: 401, code: 'invalid_credentials' });
+      return adopt(data, started);
+    },
+    async setupAccount({ username, password } = {}) {
+      assertStorage(); const started = generation;
+      const name = normalizeUsername(username);
+      if (typeof password !== 'string' || [...password].length < 12 || new TextEncoder().encode(password).length > 72) throw new CloudError('密碼至少 12 個字元；若含中文或特殊字元而過長，請縮短後重試。', { code: 'invalid_password' });
+      const current = await request('/auth/v1/user');
+      if (publicUser(current).accountConfigured) throw new CloudError('這個身分已設定帳號，請使用原帳號登入。', { status: 409, code: 'account_already_bound' });
+      // A credential write must never be retried after an uncertain outcome.
+      const data = await request('/functions/v1/vixo-account', { method: 'POST', body: { username: name, password }, retryAuth: false });
+      if (data?.user?.id !== current.id) throw new CloudError('設定帳號的身分不一致，請重新確認連線。', { code: 'account_changed' });
+      return adopt(data, started);
+    },
     async pairDevice(code) {
       assertStorage();
       const started = generation;
       const data = await raw('/functions/v1/vixo-device-pair', { method: 'POST', body: { code: String(code).trim() } });
       if (!data?.access_token || !data?.refresh_token) throw new CloudError('裝置配對未完成。');
-      checkGeneration(started);
-      generation++; persist(normalize(data)); return { user: data.user, session: true };
+      return adopt(data, started);
     },
     createDeviceCode() { return rpc('vixo_create_device_code', {}); },
     async setSession(value) {
@@ -91,7 +131,7 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
       if (!value?.access_token || !value?.refresh_token) throw new Error("Invalid session");
       const user = await raw("/auth/v1/user", { token: value.access_token });
       checkGeneration(started);
-      generation++; persist(normalize({ ...value, user })); return user;
+      generation++; persist(normalize({ ...value, user })); return publicUser(user);
     },
     async signOut() {
       const token = session?.access_token; generation++; persist(null);
@@ -103,12 +143,13 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
       try {
         const user = await request('/auth/v1/user');
         checkGeneration(started);
-        persist({ ...session, user: { id: user.id, email: user.email }, user_verified_at: Date.now() });
-        return { id: user.id, email: user.email };
+        const safe = publicUser(user);
+        persist({ ...session, user: safe, user_verified_at: Date.now() });
+        return safe;
       } catch (error) {
         assertStorage();
         checkGeneration(started);
-        if (allowOfflineCache && error.code === 'network_error' && session?.user_verified_at && session.user?.id && session.expires_at > Date.now() / 1000) return { id: session.user.id, email: session.user.email, offline: true };
+        if (allowOfflineCache && error.code === 'network_error' && session?.user_verified_at && session.user?.id && session.expires_at > Date.now() / 1000) return { ...publicUser(session.user), offline: true };
         throw error;
       }
     },

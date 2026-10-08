@@ -2,15 +2,17 @@
 
 把 Claude Code 或 Codex Session 裡完成過的流程整理成 Agent。連接雲端後，以 Supabase 儲存的版本為準，支援換裝置同步、團隊分享 Agent／Skill／Workflow、衝突保留與版本回復；執行仍由目前的 Codex／Claude 宿主完成。
 
-## v1.9.0：雲端同步與團隊分享
+## v1.10.0：帳號密碼登入與雲端同步
 
-在外掛 Dashboard 按「雲端同步」，輸入一次性裝置連線碼或團隊邀請碼即可使用，無需 M365 或寄信註冊。自己的換機碼與同仁的團隊邀請码分開。既有員工可完整預覽後上傳；連線後新增或修改 Agent 會直接儲存雲端，並保留完整 SOP 確認流程。
+在外掛 Dashboard 按「雲端同步」，用 VIXO 帳號密碼登入。原本已連線的裝置先選「設定帳號密碼」，會綁定原有身分並保留 Agent、版本與團隊權限。帳號為英文起頭的 3–32 個字元，只接受小寫英文字母、數字、`_` 與 `-`；密碼至少 12 個字元。
+
+目前沒有公開註冊。同仁第一次使用，先以團隊邀請碼配對，再設定自己的帳號；自己的換機碼保留在進階連線入口，不能代替同仁邀請碼。忘記密碼請聯絡管理員；不要求 M365 或 SMTP，尚未提供寄信重設密碼。既有員工可完整預覽後上傳；連線後新增或修改 Agent 直接儲存雲端，並保留完整 SOP 確認流程。
 
 [雲端管理中心](https://inventra.github.io/agent-teams-builder/) · [使用與管理說明](docs/CLOUD-AGENT-TEAMS.md)
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.9.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.10.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -77,7 +79,7 @@ VIXO 預設開啟新的 Docs 工作台，保留原本的員工總覽及每位員
 
 安裝器會偵測 Claude Desktop、ChatGPT Desktop 與 Codex App，但正式的本機 Plugin 安裝介面是 Claude Code Plugin 管理器與 Codex CLI Marketplace。桌面應用程式若沒有對應 CLI，不會被回報成安裝成功。公開 ChatGPT Plugin Directory 上架另需 HTTPS MCP 服務與官方審核。
 
-登入時只會啟動宿主官方登入命令與瀏覽器頁面。Plugin 不會讀取、保存或傳送使用者的帳號密碼。
+Codex／Claude 的宿主登入由官方命令與瀏覽器頁面處理，Plugin 不會讀取或保存宿主帳號密碼。VIXO 雲端帳號密碼則由專用表單送交驗證服務；本地只保存 session，不保存密碼，也不將密碼加入 Agent、SOP 或共享套件。
 
 Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位。桌面 Bridge 同時支援 `/Applications/ChatGPT.app`（內含 Codex 的統一桌面程式）與 `/Applications/Codex.app`。它會優先連接已有 CDP 的主畫面；若 App 已開啟但沒有 CDP，會啟動受管理的桌面視窗後加入 `VIXO Agents` 側欄。只有兩種 App 都無法建立安全 Renderer 時，才回退至 Codex 原生瀏覽器面板。這是桌面相容層，不是官方 manifest 提供的側欄 API。
 
