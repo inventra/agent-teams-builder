@@ -6,7 +6,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
   const root = document.querySelector("#workbench");
   let state = null, data = null, preferences = defaultPreferences(), capabilities = null;
   let initialized = false, active = false, view = "home", dragId = null, resizing = null, officeFloor = 0;
-  let saveQueue = Promise.resolve(), refreshing = false, preferenceRevision = 0;
+  let saveQueue = Promise.resolve(), refreshing = false, preferenceRevision = 0, generation = 0;
   const $ = (selector) => root.querySelector(selector);
   const actionIcons = Object.freeze({ theme: "theme", refresh: "refresh", "close-detail": "close", "close-layout": "close",
     favorite: "star", play: "play", schedule: "calendar", "schedule-delete": "trash", layout: "plus",
@@ -51,7 +51,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     button("theme", "", 'aria-label="切換明暗主題"') + button("refresh", "", 'aria-label="重新整理"') + "</div>" +
     '<div class="wb-dimbar"><div class="wb-segment" id="wb-period">' +
     ["today", "week", "month"].map((period) => button("period", ({ today: "今天", week: "本週", month: "本月" })[period],
-      'data-id="' + period + '"')).join("") + '</div><span class="wb-scope">VIXO 獨立工作區 · 本機使用者</span>' +
+      'data-id="' + period + '"')).join("") + '</div><span class="wb-scope">VIXO 獨立工作區 · 目前登入帳號</span>' +
     '<span id="wb-sync" role="status"></span></div><div id="wb-error" role="alert" hidden></div><div id="wb-stage"></div>' +
     '<dialog id="wb-detail" class="wb-dialog"><div class="wb-dialog-heading"><b id="wb-detail-title"></b>' +
     button("close-detail", "", 'aria-label="關閉詳情"') + '</div><div id="wb-detail-body"></div></dialog>' +
@@ -65,13 +65,16 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     onNavigate?.();
   }
   function savePreferences() {
+    const stamp = generation;
     preferenceRevision++;
     const snapshot = JSON.parse(JSON.stringify(preferences));
     $("#wb-sync").textContent = "正在儲存設定…";
     saveQueue = saveQueue.catch(() => {}).then(async () => {
+      if (stamp !== generation || !active) return;
       await api("/api/preferences/workbench", { method: "POST", body: JSON.stringify(snapshot) });
+      if (stamp !== generation || !active) return;
       $("#wb-sync").textContent = "設定已儲存";
-    }).catch((error) => { $("#wb-sync").textContent = "設定未儲存"; toast("設定儲存失敗：" + error.message); });
+    }).catch((error) => { if (stamp !== generation || error.code === "stale_operation") return; $("#wb-sync").textContent = "設定未儲存"; toast("設定儲存失敗：" + error.message); });
     return saveQueue;
   }
   function cardBody(id) {
@@ -233,6 +236,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     render();
   }
   function showDetail(title, html) {
+    if (!active || !state) return;
     $("#wb-detail-title").textContent = title;
     $("#wb-detail-body").innerHTML = html;
     if (!$("#wb-detail").open) $("#wb-detail").showModal();
@@ -253,7 +257,9 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
       runRows(allKnownRuns().filter((run) => run.agentId === id), 8));
   }
   async function showRun(id) {
+    const stamp = generation;
     const run = await api("/api/runs/" + encodeURIComponent(id));
+    if (stamp !== generation || !active || !state) return;
     const agent = state.agents.find((item) => item.id === run.agentId);
     const workflow = agent?.workflows.find((item) => item.id === run.workflowId);
     let controls = "";
@@ -285,6 +291,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
         "</h4><p>" + esc(node.notes) + "</p><small>來源：" + esc(node.source) + "</small></div>").join(""));
   }
   function showLayout() {
+    if (!active || !state) return;
     $("#wb-layout-body").innerHTML = preferences.cards.map((card, index) =>
       '<div class="wb-layout-row"><h4 class="wb-icon-heading">' + icon(CARD_LIBRARY[card.id].icon) + CARD_LIBRARY[card.id].name + '</h4><div class="wb-actions">' +
       button("card-up", "", 'data-id="' + card.id + '" aria-label="向前移動 ' + CARD_LIBRARY[card.id].name + '" ' + (index === 0 ? "disabled" : "")) +
@@ -350,7 +357,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
           [preferences.cards[index + 1], preferences.cards[index]];
         await savePreferences(); render(); showLayout();
       }
-    } catch (error) { toast(error.message); }
+    } catch (error) { if (error.code !== "stale_operation" && active) toast(error.message); }
   });
   root.addEventListener("change", async (event) => {
     const setting = event.target.dataset.setting, id = event.target.dataset.id;
@@ -402,10 +409,12 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     state = nextState;
     if (!active || refreshing) return;
     refreshing = true;
+    const stamp = generation;
     try {
       if (!initialized) {
         const revision = preferenceRevision;
         const [saved, trace] = await Promise.all([api("/api/preferences/workbench"), api("/workbench-capabilities.json")]);
+        if (stamp !== generation || !active) return;
         if (preferenceRevision === revision) preferences = normalizePreferences(saved);
         capabilities = trace; view = preferences.skin === "office" ? "office" : "home"; initialized = true;
       }
@@ -414,18 +423,27 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
         requestedPeriod = preferences.period;
         response = await api("/api/workbench?period=" + requestedPeriod);
       } while (active && preferences.period !== requestedPeriod);
+      if (stamp !== generation || !active) return;
       data = response;
       $("#wb-error").hidden = true; render();
     } catch (error) {
+      if (stamp !== generation || error.code === "stale_operation" || !active) return;
       $("#wb-error").hidden = false; $("#wb-error").textContent = "無法更新工作台：" + error.message + "。請重新整理；先前資料不代表最新狀態。";
       if (!data) $("#wb-stage").innerHTML = empty("工作台目前無法載入");
-    } finally { refreshing = false; }
+    } finally { if (stamp === generation) refreshing = false; }
   }
   return {
     get view() { return view; },
     get active() { return active; },
     async open(nextState) { active = true; root.hidden = false; syncTheme(); await refresh(nextState); },
     close() { active = false; root.hidden = true; $("#wb-detail").close(); $("#wb-layout").close(); syncTheme(); },
+    reset() {
+      generation++; active=false; initialized=false; refreshing=false; state=null; data=null; capabilities=null;
+      preferences=defaultPreferences(); preferenceRevision++; dragId=null; resizing=null; officeFloor=0; view="home";
+      root.hidden=true; $("#wb-detail").close(); $("#wb-layout").close(); $("#wb-search").value="";
+      for(const id of ["wb-stage","wb-detail-title","wb-detail-body","wb-layout-body","wb-sync","wb-error"]) $("#"+id).replaceChildren();
+      $("#wb-error").hidden=true; syncTheme();
+    },
     navigate, refresh,
     reportError(message) { $("#wb-error").hidden = false; $("#wb-error").textContent = message; }
   };

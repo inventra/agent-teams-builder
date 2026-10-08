@@ -1,3 +1,4 @@
+import { approvedAccountFixture } from './approved-account-fixture.mjs';
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -175,6 +176,7 @@ process.stdin.on("end",()=>{
   }
   const oldPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${oldPath || ""}`;
+  const restoreAccount = approvedAccountFixture(temporary);
   const { server, token } = createDashboardServer({ token: "a".repeat(64) });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   try {
@@ -209,6 +211,7 @@ process.stdin.on("end",()=>{
     assert.deepEqual(snapshot(saved.directory), before);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    restoreAccount();
     if (oldPath === undefined) delete process.env.PATH;
     else process.env.PATH = oldPath;
   }

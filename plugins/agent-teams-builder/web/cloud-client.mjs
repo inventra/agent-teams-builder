@@ -105,7 +105,7 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     const access = await requireApproved();
     if (!access.isAdmin) throw new CloudError('只有管理員可以審核帳號。', { status: 403, code: 'admin_required' });
   }
-  const rpc = async (name, body) => { await requireApproved(); return request(`/rest/v1/rpc/${name}`, { method: "POST", body }); };
+  const rpc = async (name, body, options = {}) => { await requireApproved(); return request(`/rest/v1/rpc/${name}`, { method: "POST", body, ...options }); };
   const table = async (name, params) => { await requireApproved(); return request(`/rest/v1/${name}?${new URLSearchParams(params)}`); };
   const uuid = (value) => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || "")) throw new Error("Invalid cloud ID"); return value; };
   return {
@@ -192,10 +192,24 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
       }
     },
     async listAssets({ workspaceId } = {}) {
-      const params = { select: "id,owner_id,workspace_id,kind,slug,title,description,revision,created_at,updated_at", order: "updated_at.desc", limit: "1000" };
+      const params = { select: "id,owner_id,workspace_id,kind,slug,title,description,revision,created_at,updated_at", order: "updated_at.desc,id.asc", limit: "1000" };
       if (workspaceId === null) params.workspace_id = "is.null";
       else if (workspaceId) params.workspace_id = `eq.${uuid(workspaceId)}`;
-      return table("vixo_assets", params);
+      const result = [], seen = new Set();
+      for (let offset = 0; ; offset += 1000) {
+        const page = await table("vixo_assets", { ...params, offset: String(offset) });
+        if (!Array.isArray(page)) throw new CloudError("雲端清單格式錯誤。", { code: "invalid_response" });
+        for (const item of page) {
+          if (seen.has(item.id)) throw new CloudError("雲端清單同步期間已變更，請重試。", { code: "list_changed" });
+          seen.add(item.id); result.push(item);
+        }
+        if (page.length < 1000) return result;
+      }
+    },
+    async getAssetMetadata(id) {
+      const rows = await table("vixo_assets", { select: "id,owner_id,workspace_id,kind,slug,title,description,revision,created_at,updated_at", id: `eq.${uuid(id)}` });
+      if (!rows[0]) throw new CloudError("找不到項目，或你已沒有存取權限。", { status: 404, code: "not_found" });
+      return rows[0];
     },
     async getAsset(id) {
       const rows = await table("vixo_assets", { select: "*", id: `eq.${uuid(id)}` });
@@ -204,7 +218,9 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     },
     listRevisions(id) { return table("vixo_asset_revisions", { select: "*", asset_id: `eq.${uuid(id)}`, order: "revision.desc", limit: "1000" }); },
     saveAsset({ id = null, kind, slug, title, description = "", bundle, workspaceId = null, expectedRevision = 0, message = "" }) {
-      return rpc("vixo_save_asset", { p_id: id ? uuid(id) : null, p_kind: kind, p_slug: slug, p_title: title, p_description: description, p_bundle: bundle, p_workspace_id: workspaceId ? uuid(workspaceId) : null, p_expected_revision: expectedRevision, p_message: message });
+      // A response can be lost after a write commits. The durable outbox decides
+      // whether to reconcile it; the transport must never replay this write.
+      return rpc("vixo_save_asset", { p_id: id ? uuid(id) : null, p_kind: kind, p_slug: slug, p_title: title, p_description: description, p_bundle: bundle, p_workspace_id: workspaceId ? uuid(workspaceId) : null, p_expected_revision: expectedRevision, p_message: message }, { retryAuth: false });
     },
     listWorkspaces() { return table("vixo_workspaces", { select: "*", order: "created_at.asc" }); },
     createWorkspace(name) { return rpc("vixo_create_workspace", { p_name: name }); },

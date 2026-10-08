@@ -1,20 +1,24 @@
 # Agent Teams Builder
 
-把 Claude Code 或 Codex Session 裡完成過的流程整理成 Agent。連接雲端後，以 Supabase 儲存的版本為準，支援換裝置同步、團隊分享 Agent／Skill／Workflow、衝突保留與版本回復；執行仍由目前的 Codex／Claude 宿主完成。
+把 Claude Code 或 Codex Session 裡完成過的流程整理成 Agent。登入並經 Kevin 核准後，在同一份資料庫查看自己擁有的本地草稿與雲端 Agent／Skill／Workflow。完整 SOP 確認後先保存本地，再透過佇列同步；執行仍由目前的 Codex／Claude 宿主完成。
 
-## v1.11.0：帳號註冊與 Kevin 審核
+## v1.12.0：本地保存、雲端同步與同一份資料庫
 
 在外掛 Dashboard 按「雲端同步」，用 VIXO 帳號密碼登入。原本已連線的裝置先選「設定帳號密碼」，會綁定原有身分並保留 Agent、版本與團隊權限。帳號為英文起頭的 3–32 個字元，只接受小寫英文字母、數字、`_` 與 `-`；密碼至少 12 個字元。
 
 新使用者可在網站或外掛填寫自訂帳號、密碼與顯示名稱註冊。新帳號一律「待審核」；可以登入查看狀態，Kevin 核准後才能使用雲端 Agent、Skill、Workflow 與團隊功能。註冊成功不代表已獲核准；遭停用的帳號也不能繼續使用雲端快取。既有使用者沿用原本 UUID、Agent 與團隊權限，不需另註冊。
 
-自己的換機碼保留在進階連線入口，不能代替同仁邀請碼；團隊邀請不會跳過帳號審核。忘記密碼請聯絡管理員；不要求 M365 或 SMTP，尚未提供寄信重設密碼。核准後，既有員工可完整預覽後上傳；連線後新增或修改 Agent 直接儲存雲端，並保留完整 SOP 確認流程。
+建立或修改仍須完整 SOP 預覽與 Double Check。確認後即保存本地草稿與持久同步佇列；外掛每 180 秒嘗試同步，也可手動同步。「本地已保存／待同步」與「雲端已儲存」會分開回報。換裝置登入後可取得已同步的內容；尚未同步的草稿仍留在原裝置。
+
+私人同步與團隊分享分開確認。遇到遠端更新衝突，保留兩份內容，選擇採用遠端或建立自己的副本；不強制覆蓋同仁新版本。執行、續跑與排程必須線上確認帳號核准及資產／團隊權限；完全離線只能保存草稿，不能沿用舊核准執行。
+
+升級時，安裝器只記錄原本地 Agent 的候選擁有者與 ID，保留原 SOP。候選 UUID 必須再由雲端驗證；沒有既有可驗證身分的檔案需使用者明確確認匯入，登入不會自動將它們歸給新帳號。自己的換機碼仍在進階連線入口，不能代替同仁邀請碼；邀請也不跳過帳號審核。忘記密碼請聯絡管理員；不要求 M365／SMTP，尚未提供寄信重設密碼。
 
 [雲端管理中心](https://inventra.github.io/agent-teams-builder/) · [使用與管理說明](docs/CLOUD-AGENT-TEAMS.md)
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.11.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.12.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -41,8 +45,8 @@
 - 在新 Session 中依名稱調用 Agent，準備對應 Skill 的執行內容。
 - 只使用目前 Session 的宿主執行：Codex 裡由 Codex 執行，Claude Code 裡由 Claude Code 執行。
 - 不使用 Anthropic API、OpenAI API 或獨立 Agent SDK 呼叫。
-- 保存 `agent.json`、`AGENT.md`、`MEMORY.md`、Skills 與版本歷程。
-- 每位員工可建立多個 Workflows，寫入 `workflows/<workflow-id>/`，並以 Skill、Tool、Manual、Approval 節點呈現。
+- 保存可攜 Agent／Skill／Workflow 套件、本地版本與持久同步佇列；舊 Agent 檔案保留，私人記憶不放入共享套件。
+- 每位員工可建立多個 Workflows，以 Skill、Tool、Manual、Approval 節點呈現並保存版本歷程。
 - VIXO Agents Dashboard 即時顯示員工、Skills 與 Workflow 節點，提供 Play、執行紀錄與每日排程。
 - 在 Codex 內按 Play 可先選擇專案；外掛會在該專案建立一個真正的 Codex Session，立即顯示於左側專案清單並在任務頁內執行。
 - Play 可選擇「遇核准節點暫停」或「本次自動核准」；等待資料與等待核准會分開顯示，並可在 Dashboard 原 Session 續跑。
@@ -52,7 +56,7 @@
 
 VIXO Agent 收到影片後，會先閱讀實際影格與相關說明，判斷是否與 ERP 操作有關。若與 ERP 有關，就自動調用共用 `erp-video-automation`，將錄影流程產出成自動化程式碼、完整輸入契約、空白範本與離線表單；使用者不需先說出技能名稱。一般 Agent、Workflow、Dashboard Play／排程及續跑任務共用這個規則；直接在宿主對話附影片時，`vixo-video-intake` 提供自動技能入口。
 
-Plugin 同時隨附相依技能 `expense-claim-helper`（Windows Cosmos ERP 收據請款）。更新 VIXO 後開新 Session 即可載入；共用路由不會改写個別員工的 SOP。影片無法讀取或操作證據不足時，會列出待補資料；未校準流程不標成可執行。範例資料庫、使用方式、Windows 需求與尚未校準的日期區間查詢，請見 [ERP 共用技能說明](docs/ERP-VIDEO-AUTOMATION.md)。
+Plugin 同時隨附相依技能 `expense-claim-helper`（Windows Cosmos ERP 收據請款）。更新 VIXO 後開新 Session 即可載入；共用路由不會改寫個別員工的 SOP。影片無法讀取或操作證據不足時，會列出待補資料；未校準流程不標成可執行。範例資料庫、使用方式、Windows 需求與尚未校準的日期區間查詢，請見 [ERP 共用技能說明](docs/ERP-VIDEO-AUTOMATION.md)。
 
 ## v1.7.0：Docs 工作台
 

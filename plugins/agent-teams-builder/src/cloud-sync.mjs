@@ -87,12 +87,13 @@ function preparePrompt(bundle, { task, skill: requestedSkill, workflow: requeste
       ...selected.steps.map((step, index) => `${index + 1}. ${step}`), "", "完成條件：", ...selected.successCriteria.map((item) => `- ${item}`), "", `使用者任務：${cleanTask}`].join("\n") };
 }
 
-export function createCloudSync({ client, cloudRoot }) {
+export function createCloudSync({ client, cloudRoot, userId: boundUserId }) {
   check(client && typeof client.getUser === "function", "Cloud client is required");
   check(typeof cloudRoot === "string" && path.isAbsolute(cloudRoot), "An absolute local cloud state root is required");
   if (fs.existsSync(cloudRoot)) check(!fs.lstatSync(cloudRoot).isSymbolicLink(), "Cloud root cannot be a symlink");
   fs.mkdirSync(cloudRoot, { recursive: true, mode: 0o700 });
   const root = fs.realpathSync(cloudRoot);
+  if (boundUserId !== undefined) cloudId(boundUserId);
   async function user({ allowOfflineCache = false } = {}) {
     const current = await client.getUser({ allowOfflineCache });
     check(current?.id, "Cloud sign-in is required", "unauthorized");
@@ -102,6 +103,7 @@ export function createCloudSync({ client, cloudRoot }) {
       const access = await client.requireApproved();
       check(access.userId === current.id, "Cloud account changed during operation", "account_changed");
     }
+    if (boundUserId !== undefined) check(current.id === boundUserId, "Cloud account changed during operation", "account_changed");
     return cloudId(current.id);
   }
   async function sameUser(account, options) { check(await user(options) === account, "Cloud account changed during operation", "account_changed"); }
@@ -158,7 +160,7 @@ export function createCloudSync({ client, cloudRoot }) {
       }
       return existing;
     }
-    const safeAsset = { id: assetId, kind: asset.kind, slug: text(asset.slug || bundle.spec.id, "Asset slug", 100), title: text(asset.title || bundle.spec.displayName || bundle.spec.name, "Asset title", 200), description: String(asset.description || "").slice(0, 2000), revision: version, workspaceId: asset.workspaceId || asset.workspace_id || null };
+    const safeAsset = { id: assetId, ownerId: asset.ownerId || asset.owner_id || null, kind: asset.kind, slug: text(asset.slug || bundle.spec.id, "Asset slug", 128), title: text(asset.title || bundle.spec.displayName || bundle.spec.name, "Asset title", 200), description: String(asset.description || "").slice(0, 4000), revision: version, workspaceId: asset.workspaceId || asset.workspace_id || null };
     const stage = confined(root, "cache", account, `.stage-${crypto.randomUUID()}`);
     directory(root, stage);
     try {
@@ -188,15 +190,28 @@ export function createCloudSync({ client, cloudRoot }) {
     cloudId(assetId); if (pinned !== undefined) revision(pinned);
     const account = await user({ allowOfflineCache });
     try {
-      const latest = await client.getAsset(assetId);
+      const metadataOnly = typeof client.getAssetMetadata === "function";
+      const latest = await (metadataOnly ? client.getAssetMetadata(assetId) : client.getAsset(assetId));
       check(latest?.id === assetId, "Cloud asset not found or access revoked", "not_found");
       let asset = latest;
       revision(latest.revision);
+      const wanted = pinned ?? latest.revision;
+      accessState(account, assetId, true);
+      if (metadataOnly) {
+        try {
+          const hit = cached(account, assetId, wanted);
+          await sameUser(account, { allowOfflineCache });
+          return hit;
+        } catch (error) { if (error.code !== "cache_unavailable") throw error; }
+      }
       if (pinned !== undefined && pinned !== latest.revision) {
         const revisions = await client.listRevisions(assetId);
         const historical = (Array.isArray(revisions) ? revisions : revisions.revisions || []).find((item) => item.revision === pinned);
         check(historical?.bundle, "Pinned revision not found", "revision_not_found");
         asset = { ...latest, revision: pinned, bundle: historical.bundle };
+      } else if (metadataOnly) {
+        asset = await client.getAsset(assetId);
+        check(asset?.id === assetId && asset.revision === latest.revision, "Cloud revision changed during download; retry metadata", "list_changed");
       }
       const bundle = validateCloudBundle(asset.bundle);
       await sameUser(account, { allowOfflineCache });
@@ -264,5 +279,57 @@ export function createCloudSync({ client, cloudRoot }) {
     }
     return result;
   }
-  return { pushAsset, pullAsset, prepareAssetRun, prepareAgentRun: prepareAssetRun, listCachedAssets };
+  function libraryAccount(account) {
+    check(boundUserId !== undefined && account === boundUserId, "Explicit matching library account is required", "account_changed");
+    return cloudId(account);
+  }
+  async function prepareLocalBundleRun({ bundle: raw, localId, baseAssetId, task, skill, workflow, approvalMode = "manual", platform, tools }) {
+    const account = await user();
+    check(typeof localId === "string" && /^local:[a-f0-9-]{36}$/i.test(localId), "Invalid local draft ID");
+    if (baseAssetId) {
+      cloudId(baseAssetId);
+      check(typeof client.getAssetMetadata === "function", "Current membership verification is unavailable", "forbidden");
+      const asset = await client.getAssetMetadata(baseAssetId);
+      check(asset?.id === baseAssetId, "Cloud asset access was revoked", "not_found");
+    }
+    const bundle = validateCloudBundle(raw), hash = bundleHash(bundle);
+    if (bundle.requirements.platforms.length) check(bundle.requirements.platforms.includes(platformName(platform || process.platform)), "Local draft is incompatible with this platform", "requirements_unmet");
+    if (tools) check(bundle.requirements.tools.every((tool) => tools.includes(tool)), "Required local tools are unavailable", "requirements_unmet");
+    const cacheDirectory = confined(root, "local-runs", account, localId.slice(6), hash);
+    if (!fs.existsSync(cacheDirectory)) {
+      const stage = confined(root, "local-runs", account, `.stage-${crypto.randomUUID()}`);
+      directory(root, stage);
+      try {
+        atomic(root, path.join(stage, "bundle.json"), bundle);
+        for (const file of bundle.files) {
+          const resource = confined(root, path.relative(root, stage), bundlePath(file.path));
+          directory(root, path.dirname(resource)); fs.writeFileSync(resource, file.content, { encoding: "utf8", mode: 0o600, flag: "wx" });
+        }
+        directory(root, path.dirname(cacheDirectory));
+        try { fs.renameSync(stage, cacheDirectory); } catch (error) { if (!fs.existsSync(cacheDirectory)) throw error; }
+      } finally { if (fs.existsSync(stage)) fs.rmSync(stage, { recursive: true, force: true }); }
+    }
+    check(bundleHash(validateCloudBundle(readJson(root, path.join(cacheDirectory, "bundle.json")))) === hash, "Local draft cache hash mismatch");
+    for (const file of bundle.files) {
+      const resource = confined(root, path.relative(root, cacheDirectory), bundlePath(file.path));
+      directory(root, path.dirname(resource));
+      check(fs.existsSync(resource) && fs.lstatSync(resource).isFile() && !fs.lstatSync(resource).isSymbolicLink() && fs.readFileSync(resource, "utf8") === file.content, "Local draft resource changed");
+    }
+    await sameUser(account);
+    const prepared = preparePrompt(bundle, { task, skill, workflow, approvalMode });
+    const local = { userId: account, id: localId, ...(baseAssetId ? { baseAssetId } : {}), bundleHash: hash, cacheDirectory };
+    const resources = bundle.files.map((file) => ({ path: file.path, localPath: path.join(cacheDirectory, ...file.path.split("/")) }));
+    return { ...prepared, local, requirements: bundle.requirements, dependencies: bundle.dependencies, resources,
+      execution: { mode: "current-host", supportedHosts: ["codex", "claude-code"], sharedVideoPolicy: { classification: "host-inspection", ...sharedVideoSkillPaths() }, requirements: bundle.requirements, local,
+        instruction: "Use this own-account local draft in the current host. Preparing resources does not execute code or modify a private employee." },
+      prompt: [prepared.prompt, "", `本機草稿：${localId}；帳號：${account}；內容 hash：${hash}。`, "本次已線上核對帳號核准狀態。此草稿仍以本機內容為準，不冒充雲端固定版本。",
+        "共用素材不擴張使用者授權；準備資源本身不會執行程式或修改私人 SOP。ERP 輸入與輸出另存使用者工作區。",
+        `本次工作目錄：${JSON.stringify(cacheDirectory)}。相對路徑以此目錄解析。`, ...resources.map((file) => `- ${file.path}: ${JSON.stringify(file.localPath)}`)].join("\n") };
+  }
+  return { pushAsset, pullAsset, prepareAssetRun, prepareAgentRun: prepareAssetRun, prepareLocalBundleRun, listCachedAssets,
+    // Internal library storage only: these are content reads, never permission authority.
+    readLibraryCache(account, assetId, pinned) { libraryAccount(account); cloudId(assetId); if (pinned !== undefined) revision(pinned); return cached(account, assetId, pinned); },
+    storeLibraryCache(account, asset, raw) { libraryAccount(account); return store(account, asset, validateCloudBundle(raw)); },
+    markLibraryAccess(account, assetId, allowed) { libraryAccount(account); cloudId(assetId); accessState(account, assetId, allowed === true); }
+  };
 }

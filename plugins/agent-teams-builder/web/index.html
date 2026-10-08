@@ -18,16 +18,18 @@
   </style>
 </head>
 <body>
-  <div class="shell">
+  <section id="session-gate" class="session-gate" aria-live="polite"><div class="gate-card"><div class="eyebrow">VIXO AGENT TEAMS</div><h1>正在確認帳號…</h1></div></section>
+  <div class="shell" hidden>
     <aside>
       <div class="brand"><span class="brand-mark">V</span><div><strong>VIXO Agents</strong><small>Agent Team Console</small></div></div>
       <nav id="agent-nav"></nav>
+      <section id="account-controls" class="account-controls"><button id="account-button" class="secondary">帳號設定</button><p id="account-name"></p><p id="sync-status" role="status"></p><button id="sync-now" class="secondary">立即同步</button><button id="open-cloud" class="secondary">團隊與雲端管理</button><button id="logout" class="secondary">登出</button></section>
       <div class="aside-foot"><span class="dot"></span><span id="host-status">正在連線…</span></div>
     </aside>
     <main>
       <header>
         <div><div class="eyebrow">VIXO AGENT TEAM</div><h1 id="page-title">員工總覽</h1><p id="page-subtitle">把訓練結果、技能與執行流程放在同一個畫面。</p></div>
-        <div class="header-actions"><button id="open-cloud" class="secondary">雲端同步</button><button id="check-update" class="secondary"><span class="vixo-inline-icon" data-ui-icon="down" aria-hidden="true"></span>檢查更新</button><button id="refresh" class="secondary"><span class="vixo-inline-icon" data-ui-icon="refresh" aria-hidden="true"></span>重新整理</button></div>
+        <div class="header-actions"><button id="check-update" class="secondary"><span class="vixo-inline-icon" data-ui-icon="down" aria-hidden="true"></span>檢查更新</button><button id="refresh" class="secondary"><span class="vixo-inline-icon" data-ui-icon="refresh" aria-hidden="true"></span>重新整理</button></div>
       </header>
       <section id="update-banner" class="update-banner" hidden></section>
       <section id="summary" class="summary"></section>
@@ -63,6 +65,7 @@
       <button class="primary" value="default"><span class="vixo-inline-icon" data-ui-icon="check" aria-hidden="true"></span>儲存排程</button>
     </form>
   </dialog>
+  <dialog id="library-dialog" class="library-dialog"><div class="library-dialog-head"><h2 id="library-dialog-title"></h2><button id="close-library-dialog" class="secondary" aria-label="關閉資料詳情">關閉</button></div><div id="library-dialog-body"></div></dialog>
   <div id="toast" role="status"></div>
   <script type="module" src="/app.js"></script>
 </body>

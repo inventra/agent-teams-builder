@@ -6,6 +6,33 @@ const reply = (data, status = 200) => new Response(JSON.stringify(data), { statu
 const options = { url: 'https://example.supabase.co', key: 'sb_publishable_test' };
 const account = { id, email: 'kai_test@accounts.vixo.invalid', app_metadata: { vixo_username: 'kai_test' } };
 const passwordSession = { access_token: 'password-access', refresh_token: 'password-refresh', user: account };
+test('library metadata pages beyond 1000 without requesting bundles and singular metadata is lightweight', async () => {
+  const routes = [];
+  const client = createCloudClient({ ...options, getSession: () => ({ ...passwordSession, expires_at: Date.now() / 1000 + 3600 }), fetchImpl: async (url) => {
+    routes.push(url);
+    if (url.endsWith('/rest/v1/rpc/vixo_my_access')) return reply({ userId: id, status: 'approved', isAdmin: false });
+    const query = new URL(url).searchParams;
+    assert.equal(query.get('select').includes('bundle'), false); assert.notEqual(query.get('select'), '*');
+    if (query.get('id')) return reply([{ id, owner_id: id, revision: 1 }]);
+    const offset = Number(query.get('offset'));
+    return reply(Array.from({ length: offset ? 7 : 1000 }, (_, index) => ({ id: `asset-${offset + index}`, revision: 1 })));
+  } });
+  assert.equal((await client.listAssets()).length, 1007);
+  assert.deepEqual(routes.filter(url => new URL(url).pathname === '/rest/v1/vixo_assets').map(url => new URL(url).searchParams.get('offset')), ['0', '1000']);
+  assert.equal((await client.getAssetMetadata(id)).revision, 1);
+});
+test('asset writes are never replayed after an uncertain 401 or unavailable response', async () => {
+  for (const status of [401, 503]) {
+    let writes = 0, refreshes = 0;
+    const client = createCloudClient({ ...options, getSession: () => ({ ...passwordSession, expires_at: Date.now() / 1000 + 3600 }), fetchImpl: async url => {
+      if (url.endsWith('/rest/v1/rpc/vixo_my_access')) return reply({ userId: id, status: 'approved', isAdmin: false });
+      if (url.includes('grant_type=refresh_token')) { refreshes++; return reply(passwordSession); }
+      writes++; return reply({ code: 'write_response_unavailable' }, status);
+    } });
+    await assert.rejects(client.saveAsset({ kind: 'agent', slug: 'reader', title: 'Reader', bundle: {}, expectedRevision: 0 }));
+    assert.equal(writes, 1); assert.equal(refreshes, 0);
+  }
+});
 test('password login normalizes username and persists only session fields, never the password', async () => {
   let saved = null;
   const client = createCloudClient({ ...options, getSession: () => saved, saveSession: value => { saved = value; }, fetchImpl: async (url, request) => {

@@ -1,3 +1,4 @@
+import { approvedAccountFixture } from './approved-account-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -115,6 +116,7 @@ test("new API endpoints require auth, persist preferences and return safe detail
   fs.mkdirSync(path.join(root, agent.id));
   fs.writeFileSync(path.join(root, agent.id, "agent.json"), JSON.stringify(agent));
   writeRun(root, { id: "api-run", agentId: agent.id, status: "completed", startedAt: new Date().toISOString(), logFile: "/private/log" });
+  const restoreAccount = approvedAccountFixture(root);
   const { server, token } = createDashboardServer({ token: "test-workbench-token" });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   const base = "http://127.0.0.1:" + server.address().port;
@@ -146,6 +148,7 @@ test("new API endpoints require auth, persist preferences and return safe detail
     assert.equal(trace.count, 173);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    restoreAccount();
     if (previousRoot === undefined) delete process.env.AGENT_TEAMS_HOME; else process.env.AGENT_TEAMS_HOME = previousRoot;
     fs.rmSync(root, { recursive: true, force: true });
   }

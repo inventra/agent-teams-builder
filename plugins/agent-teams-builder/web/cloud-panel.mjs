@@ -241,7 +241,7 @@ $('confirm').onclick = action(async () => {
   const result = await api('publish', { token: draft.token, userConfirmation: '確認發布' });
   if (result?.status === 'conflict') { notice('雲端已有新版本，修改已保留。'); return; }
   invalidateDraft();
-  await refresh(); notice('已發布到雲端。');
+  await refresh(); notice(result?.status === 'queued' ? '已儲存在本機，等待背景同步。' : '已發布到雲端。');
 });
 if (connectionChannel) connectionChannel.onmessage = event => {
   if (event.data?.type !== 'identity-changed') return;

@@ -151,6 +151,65 @@ function writeJson(file, value) {
   fs.renameSync(temporary, file);
 }
 
+export function ensureLegacyOwnerSnapshot(agentTeamsRoot) {
+  const resolved = path.resolve(agentTeamsRoot);
+  fs.mkdirSync(resolved, { recursive: true });
+  const rootInfo = fs.lstatSync(resolved);
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('Legacy ownership root must be a real directory');
+  const root = fs.realpathSync(resolved);
+  function checked(relative, { directory = false, create = false } = {}) {
+    let current = root;
+    const parts = relative.split('/');
+    for (let index = 0; index < parts.length; index++) {
+      const part = parts[index];
+      if (!part || part === '.' || part === '..' || part.includes('\\')) throw new Error('Invalid legacy ownership path');
+      current = path.join(current, part);
+      let info;
+      try { info = fs.lstatSync(current); }
+      catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        if (create && (index < parts.length - 1 || directory)) {
+          try { fs.mkdirSync(current, { mode: 0o700 }); } catch (error) { if (error.code !== 'EEXIST') throw error; }
+          info = fs.lstatSync(current);
+        } else return null;
+      }
+      if (info.isSymbolicLink() || (index < parts.length - 1 || directory ? !info.isDirectory() : !info.isFile())) throw new Error('Legacy ownership paths cannot use symlinks or special files');
+    }
+    return current;
+  }
+  checked('.system/cloud', { directory: true, create: true });
+  const marker = path.join(root, '.system', 'cloud', 'legacy-owner.json');
+  if (checked('.system/cloud/legacy-owner.json')) return { path: marker, created: false };
+  function metadata(relative) {
+    const file = checked(relative);
+    if (!file) return null;
+    if (fs.statSync(file).size > 1024 * 1024) throw new Error('Legacy migration metadata exceeds limit');
+    try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (error) { if (error instanceof SyntaxError) return null; throw error; }
+  }
+  const installed = metadata(`.system/marketplace/plugins/${PLUGIN}/package.json`);
+  const update = installed?.version ? null : metadata('.system/update-state.json');
+  const previousVersion = installed?.version || update?.installedVersion;
+  const session = metadata('.system/cloud/session.json');
+  const verified = typeof session?.user_verified_at === 'number' && Number.isFinite(session.user_verified_at) && session.user_verified_at > 0;
+  const uuid = session?.user?.id;
+  const candidate = parseVersion(previousVersion) && !versionAtLeast(previousVersion, '1.12.0') && verified &&
+    typeof uuid === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(uuid) ? uuid.toLowerCase() : null;
+  const agentIds = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(entry.name)) continue;
+    if (entry.isSymbolicLink()) throw new Error('Legacy Agent directories cannot be symlinks');
+    if (!entry.isDirectory()) continue;
+    if (checked(`${entry.name}/agent.json`)) agentIds.push(entry.name);
+  }
+  const record = { formatVersion: 1, userId: candidate, agentIds: agentIds.sort(), createdAt: new Date().toISOString() };
+  let descriptor;
+  try { descriptor = fs.openSync(marker, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | (fs.constants.O_NOFOLLOW || 0), 0o600); }
+  catch (error) { if (error.code !== 'EEXIST') throw error; checked('.system/cloud/legacy-owner.json'); return { path: marker, created: false }; }
+  try { fs.writeFileSync(descriptor, `${JSON.stringify(record)}\n`, 'utf8'); fs.fsyncSync(descriptor); }
+  finally { fs.closeSync(descriptor); }
+  return { path: marker, created: true };
+}
+
 function readReleaseMetadata(sourceRoot) {
   try {
     const metadata = readJson(path.join(sourceRoot, "release-metadata.json"));
@@ -460,6 +519,9 @@ export function install(options = {}) {
   const authentication = {};
   if (compatibility.codex?.compatible) authentication.codex = ensureHostAuthentication("codex", { skipLogin });
   if (compatibility.claude?.compatible) authentication.claude = ensureHostAuthentication("claude", { skipLogin });
+  // Capture only a candidate before stopping runtimes or replacing plugin code.
+  // Runtime access must reverify this UUID; signin never assigns legacy files.
+  ensureLegacyOwnerSnapshot(agentTeamsRoot);
   const installedRuntime = runtimePaths(path.join(agentTeamsRoot, ".system", "runtime"), runtimePlatformKey());
   const stopRuntimeNode = installedRuntime?.node && fs.existsSync(installedRuntime.node) ? installedRuntime.node : process.execPath;
   stopInstalledRuntimes(agentTeamsRoot, marketplaceRoot, stopRuntimeNode);

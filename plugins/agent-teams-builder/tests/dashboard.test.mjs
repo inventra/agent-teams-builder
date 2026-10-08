@@ -1,3 +1,4 @@
+import { approvedAccountFixture } from './approved-account-fixture.mjs';
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
@@ -66,6 +67,7 @@ process.stdin.on("end", () => {
   const oldPath = process.env.PATH;
   process.env.PATH = `${bin}${path.delimiter}${oldPath}`;
   const updateRevision = "a".repeat(40);
+  const restoreAccount = approvedAccountFixture(temporary);
   const { server, token } = createDashboardServer({
     token: "a".repeat(64),
     updateOptions: { fetchImpl: async (url) => url.includes("package.json")
@@ -191,6 +193,7 @@ process.stdin.on("end", () => {
     assert.match(await page.text(), /VIXO Agents/);
   } finally {
     await new Promise((resolve) => server.close(resolve));
+    restoreAccount();
     fs.rmSync(temporary, { recursive: true, force: true });
     delete process.env.AGENT_TEAMS_HOME;
     if (oldCodexHome === undefined) delete process.env.CODEX_HOME;

@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { install, repairHostRegistrations, versionAtLeast } from "../scripts/install.mjs";
+import { install, repairHostRegistrations, versionAtLeast, ensureLegacyOwnerSnapshot } from "../scripts/install.mjs";
 
 function createFakeHost(bin, name, version, log, { alreadyInstalled = false, loggedIn = true, failLogin = false } = {}) {
   const state = path.join(bin, `${name}-logged-in`);
@@ -77,7 +77,23 @@ test("installer configures every detected compatible CLI", () => {
   process.env.AGENT_TEAMS_SKIP_NPM = "1";
   try {
     const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-    const report = install({ sourceRoot, agentTeamsRoot: path.join(temporary, "Agent Teams"), skipNpm: true });
+    const agentTeamsRoot = path.join(temporary, 'Agent Teams');
+    const oldPlugin = path.join(agentTeamsRoot, '.system', 'marketplace', 'plugins', 'agent-teams-builder');
+    fs.mkdirSync(path.join(oldPlugin, 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(oldPlugin, 'package.json'), JSON.stringify({ version: '1.11.0' }));
+    fs.mkdirSync(path.join(agentTeamsRoot, '.system', 'cloud'));
+    fs.writeFileSync(path.join(agentTeamsRoot, '.system', 'cloud', 'session.json'), JSON.stringify({ user: { id: '10000000-0000-4000-8000-000000000001' }, user_verified_at: 1, access_token: 'private-fixture' }));
+    const employee = path.join(agentTeamsRoot, 'legacy-agent'); fs.mkdirSync(employee);
+    fs.writeFileSync(path.join(employee, 'agent.json'), JSON.stringify({ id: 'legacy-agent' }));
+    const sop = 'Keep the original local SOP exactly.\n'; fs.writeFileSync(path.join(employee, 'AGENT.md'), sop);
+    const stoppedSnapshot = path.join(temporary, 'snapshot-at-stop.json');
+    fs.writeFileSync(path.join(oldPlugin, 'scripts', 'vixo-agents-dashboard.mjs'), `import fs from 'node:fs';fs.copyFileSync(${JSON.stringify(path.join(agentTeamsRoot, '.system', 'cloud', 'legacy-owner.json'))},${JSON.stringify(stoppedSnapshot)});`);
+    const report = install({ sourceRoot, agentTeamsRoot, skipNpm: true });
+    const snapshot = JSON.parse(fs.readFileSync(stoppedSnapshot, 'utf8'));
+    assert.equal(snapshot.userId, '10000000-0000-4000-8000-000000000001');
+    assert.deepEqual(snapshot.agentIds, ['legacy-agent']);
+    assert.equal(fs.readFileSync(path.join(employee, 'AGENT.md'), 'utf8'), sop);
+    assert.doesNotMatch(JSON.stringify(snapshot), /private-fixture|access_token/);
     assert.equal(report.results.codex.installed, true);
     assert.equal(report.results.claude.installed, true);
     const calls = fs.readFileSync(log, "utf8");
@@ -101,6 +117,72 @@ test("installer configures every detected compatible CLI", () => {
     delete process.env.AGENT_TEAMS_SKIP_NPM;
     fs.rmSync(temporary, { recursive: true, force: true });
   }
+});
+
+test('legacy ownership snapshot is immutable across signins and keeps existing local files untouched', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'vixo-legacy-owner-'));
+  try {
+    const root = path.join(temporary, 'Agent Teams');
+    const cloud = path.join(root, '.system', 'cloud'); fs.mkdirSync(cloud, { recursive: true });
+    const plugin = path.join(root, '.system', 'marketplace', 'plugins', 'agent-teams-builder'); fs.mkdirSync(plugin, { recursive: true });
+    fs.writeFileSync(path.join(plugin, 'package.json'), JSON.stringify({ version: '1.11.0+codex.fixture' }));
+    const agent = path.join(root, 'legacy-agent'); fs.mkdirSync(agent); fs.writeFileSync(path.join(agent, 'agent.json'), '{"id":"legacy-agent"}');
+    fs.writeFileSync(path.join(agent, 'AGENT.md'), 'Private original SOP');
+    const session = path.join(cloud, 'session.json');
+    fs.writeFileSync(session, JSON.stringify({ user: { id: '10000000-0000-4000-8000-000000000001' }, user_verified_at: Date.now(), access_token: 'never-copy-access', refresh_token: 'never-copy-refresh' }));
+    const made = ensureLegacyOwnerSnapshot(root); assert.equal(made.created, true);
+    const content = fs.readFileSync(made.path, 'utf8'); const record = JSON.parse(content);
+    assert.deepEqual(Object.keys(record).sort(), ['agentIds', 'createdAt', 'formatVersion', 'userId']);
+    assert.deepEqual(record.agentIds, ['legacy-agent']); assert.equal(record.formatVersion, 1); assert.ok(Number.isFinite(Date.parse(record.createdAt)));
+    assert.doesNotMatch(content, /access_token|refresh_token|never-copy|Private original/);
+    if (process.platform !== 'win32') assert.equal(fs.statSync(made.path).mode & 0o777, 0o600);
+    fs.writeFileSync(session, JSON.stringify({ user: { id: '20000000-0000-4000-8000-000000000001' }, user_verified_at: Date.now() }));
+    assert.equal(ensureLegacyOwnerSnapshot(root).created, false);
+    assert.equal(fs.readFileSync(made.path, 'utf8'), content);
+    assert.equal(fs.readFileSync(path.join(agent, 'AGENT.md'), 'utf8'), 'Private original SOP');
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test('fresh, unverified, and new-version roots stay unassigned, including after a later login', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'vixo-unassigned-owner-'));
+  try {
+    for (const [name, version, verified] of [['fresh', null, true], ['unverified', '1.11.0', false], ['current', '1.12.0', true], ['disconnected', '1.11.0', null]]) {
+      const root = path.join(temporary, name); const cloud = path.join(root, '.system', 'cloud'); fs.mkdirSync(cloud, { recursive: true });
+      if (version) fs.writeFileSync(path.join(root, '.system', 'update-state.json'), JSON.stringify({ installedVersion: version }));
+      const session = path.join(cloud, 'session.json');
+      if (verified !== null) fs.writeFileSync(session, JSON.stringify({ user: { id: '10000000-0000-4000-8000-000000000001' }, ...(verified ? { user_verified_at: 1 } : {}) }));
+      const made = ensureLegacyOwnerSnapshot(root); const initial = fs.readFileSync(made.path, 'utf8');
+      assert.equal(JSON.parse(initial).userId, null); assert.deepEqual(JSON.parse(initial).agentIds, []);
+      fs.writeFileSync(session, JSON.stringify({ user: { id: '20000000-0000-4000-8000-000000000001' }, user_verified_at: Date.now() }));
+      ensureLegacyOwnerSnapshot(root); assert.equal(fs.readFileSync(made.path, 'utf8'), initial);
+    }
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
+});
+
+test('legacy migration rejects symlink roots, credential paths, marker files, and employee files', (t) => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'vixo-owner-symlink-'));
+  try {
+    const outside = path.join(temporary, 'outside'); fs.mkdirSync(outside);
+    const probe = path.join(temporary, 'probe');
+    try { fs.symlinkSync(outside, probe, process.platform === 'win32' ? 'junction' : 'dir'); } catch (error) {
+      if (process.platform === 'win32' && ['EPERM', 'EACCES', 'ENOTSUP'].includes(error.code)) { t.skip('Symlink creation unavailable'); return; } throw error;
+    }
+    assert.throws(() => ensureLegacyOwnerSnapshot(probe), /real directory/);
+    for (const name of ['system', 'cloud', 'marker', 'session', 'employee']) {
+      const root = path.join(temporary, name); const cloud = path.join(root, '.system', 'cloud'); fs.mkdirSync(cloud, { recursive: true });
+      if (name === 'system' || name === 'cloud') {
+        const target = name === 'system' ? path.join(root, '.system') : cloud;
+        fs.rmSync(target, { recursive: true }); fs.symlinkSync(outside, target, process.platform === 'win32' ? 'junction' : 'dir');
+      } else {
+        const target = name === 'marker' ? path.join(cloud, 'legacy-owner.json') : name === 'session' ? path.join(cloud, 'session.json') : path.join(root, 'legacy-agent', 'agent.json');
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        // A directory junction also exercises special-file rejection on Windows.
+        fs.symlinkSync(outside, target, process.platform === 'win32' ? 'junction' : 'dir');
+      }
+      assert.throws(() => ensureLegacyOwnerSnapshot(root), /symlinks or special files/);
+    }
+    assert.deepEqual(fs.readdirSync(outside), []);
+  } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 });
 
 test("installer launches browser login for every unauthenticated host", () => {

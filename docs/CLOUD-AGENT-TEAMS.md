@@ -1,16 +1,16 @@
 # VIXO Agent Teams 雲端版本
 
-v1.11.0 開放自訂帳號密碼註冊，新帳號先待審核，由 Kevin 核准後使用雲端功能。它沿用 v1.10.0 的帳密登入與 v1.9.0 的 Supabase Agent、Skill、Workflow 版本與團隊權限。已核准且連線的 VIXO 從雲端查詢、驗證權限並同步指定版本，由目前裝置上的 Codex／Claude 與本地工具執行。換機同步的是角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
+v1.12.0 先登入，再以同一份資料庫查看目前帳號擁有的本地草稿與雲端 Agent、Skill、Workflow。完整預覽經 Double Check 後先保存本地與持久同步佇列，每 180 秒嘗試同步。新帳號仍待 Kevin 審核；執行由目前裝置上的 Codex／Claude 與本地工具完成，開始／續跑時需線上查核核准與資產權限。換機同步的是已同步的角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
 
 ## Git、Supabase 與本地裝置
 
 | 位置 | 負責內容 |
 | --- | --- |
 | GitHub | 外掛原始碼、公用 Skill、migration、測試、可追溯的 commit、版本安裝包，以及雲端管理頁的發布。 |
-| Supabase | 個人／團隊身分與權限、Agent／Skill／Workflow 套件、不可改寫的歷史版本、裝置連線碼及邀請碼的雜湊。 |
-| 本地 VIXO | 裝置 session、按身分與版本隔離的快取、Codex／Claude 執行，以及 ERP 所需的本地工具與環境。 |
+| Supabase | 個人／團隊身分與權限、已同步的 Agent／Skill／Workflow 套件、不可改寫的歷史版本、裝置連線碼及邀請碼的雜湊。 |
+| 本地 VIXO | 裝置 session、按帳號隔離的本地定義與同步佇列、固定版本快取、Codex／Claude 執行，以及 ERP 所需的本地工具與環境。 |
 
-Git commit 是程式版本；Supabase revision 是每個共享資產的內容版本，兩者分開管理。已連線時 Supabase 是 Agent 的正式資料來源；雲端無法連線或權限不符時，不會改用本地同名員工執行。未連線的舊安裝仍可使用原本本地 Agent。
+Git commit 是程式版本；Supabase revision 是每個雲端資產的內容版本，本地版本另以 localHash 判斷內容變化。登入後的清單合併本人本地草稿與授權雲端內容，顯示「待同步／已同步／衝突」。未登入不能以同名本地檔案替代帳號資料；離線可保留本人草稿，但不能開始或續跑任務。
 
 雲端管理頁位址由 `plugins/agent-teams-builder/web/cloud-config.json` 的 `portalUrl` 指定。前端設定只包含 Supabase 公開 URL／publishable key；service-role key 只留在服務端。發布狀態請以 GitHub Release、Pages deployment 與 Supabase migration／Edge Function 的實際結果為準。
 
@@ -20,14 +20,20 @@ VIXO 雲端使用自己的帳號密碼；Codex／Claude 仍使用原有宿主登
 
 ### 已連線的既有裝置
 
-1. 更新至 v1.11.0，開新 Session，呼叫 `dashboard_open`，進入「雲端同步」。
+1. 更新至 v1.12.0，開新 Session，呼叫 `dashboard_open`，進入「雲端同步」。
 2. 若尚未設定帳號，選擇「設定帳號密碼」，直接在表單設定。
 3. 設定會綁定目前已連線的身分，保留原有 UUID、私人 Agent、歷史版本與團隊權限；不另外建立一個空白帳號。
-4. 之後在外掛或[雲端管理中心](https://inventra.github.io/agent-teams-builder/)用這組帳號密碼登入。以 `cloud_status` 確認目前身分，`agent_list` 查看 Agent，`cloud_list` 查看全部可存取的 Agent、Skill、Workflow。
+4. 之後在外掛或[雲端管理中心](https://inventra.github.io/agent-teams-builder/)用這組帳號密碼登入。以 `cloud_status` 確認目前身分，`agent_list` 查看合併的 Agent，`cloud_list` 查看本地／雲端合併的 Agent、Skill、Workflow。
+
+### 舊本地資料的歸屬
+
+安裝器在停止舊程式與替換外掛前建立一次 `.system/cloud/legacy-owner.json`，只保存 formatVersion、候選 UUID、原本地 Agent IDs 與 createdAt，不保存 token、密碼或 SOP。只有可確認為 v1.12 之前的安裝、session 有 UUID 與曾驗證標記，才記錄候選 UUID；其餘記錄為未歸屬，空清單也保留。安裝／重跑不改寫既有記錄，原 Agent 檔案不搬移或修改。
+
+候選 UUID 仍須與本次雲端 Auth 驗證一致，才可讀取其舊 Agent。未歸屬資料必須先由使用者明確確認匯入；登入另一個帳號不會自動取得這批檔案。一般本地草稿、佇列及雲端快取也按 userId 隔離。退出或切換帳號不會把未同步草稿轉給其他人。
 
 ### 同仁第一次使用
 
-1. 在[雲端管理中心](https://inventra.github.io/agent-teams-builder/)或外掛「雲端同步」選擇註冊，填寫帳號、密碼與顯示名稱。顯示名稱為去除首尾空白後的 1–80 個字元，勿放入憑證。
+1. 打開外掛首頁，或在[雲端管理中心](https://inventra.github.io/agent-teams-builder/)選擇註冊，填寫帳號、密碼與顯示名稱。顯示名稱為去除首尾空白後的 1–80 個字元，勿放入憑證。
 2. 註冊後可登入查看「待審核」狀態；等待 Kevin 核准。核准前不能查詢、發布或執行雲端 Agent／Skill／Workflow，也不能使用團隊功能或舊快取繞過審核。
 3. Kevin 核准後，重新確認目前狀態即可使用雲端功能；收到團隊邀請碼時，再透過「加入團隊」加入該空間。團隊角色與帳號核准分開管理，邀請碼不能將帳號自行核准。
 
@@ -52,16 +58,27 @@ values ('<SHA256_HEX_FROM_LOCAL>', null, clock_timestamp() + interval '10 minute
 
 Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台身分，再由已連線使用者設定帳號密碼。bootstrap 過期或已使用就失效；客戶端不能直接建立 bootstrap，也不能指定另一位使用者的身分。之後使用帳密登入或正常換機／團隊邀請流程。管理者 seed 與實際配對是不同步驟，完成 seed 不等於裝置已連線。
 
-## 把本地訓練成果放到雲端
+## 確認後保存與同步
+
+1. 登入後用 `agent_get`／資料庫入口讀取目前內容。建立／修改 Agent 使用 `agent_preview`，獨立 Skill／Workflow 使用 `library_preview`；完整展示角色、SOP、附檔、依賴、流程及私人／團隊目的地。
+2. 使用者明確 Double Check 後，以預覽 token 與確認原文呼叫 `agent_commit`／`library_commit`。確認的內容先保存為本人本地定義與持久佇列，回傳穩定 `local:<uuid>`，不直接改寫舊私人 SOP 資料夾。
+3. 同步器每 180 秒嘗試同步，或呼叫 `library_sync` 手動同步。發布使用讀取時的遠端 revision；本地再次修改需目前 localHash，防止舊預覽覆蓋較新內容。
+4. 回報目前狀態：本地保存不等於雲端已儲存。同步失敗時草稿留在本機；換裝置只能取得已同步的版本。雲端成功後仍以資產 ID／revision 讀回驗證。
+
+更新衝突會保留本地與遠端內容，停止覆寫。完整比較後使用 `library_resolve` 選「採用遠端」或「另存副本」，並傳入目前項目的 bundleHash（`expectedHash`）及遠端 revision（`remoteRevision`）核對選擇；同步器另外核對本地 localHash，不能強制覆蓋。採用遠端會保留衝突稿供查閱；另存副本建立自己的獨立內容。私人同步不代表分享給同仁，團隊發布需要明確選擇目標空間並確認權限。
+
+完全離線只可保存本人草稿與確認後的修改；草稿不是執行核准憑證。待審核或停用身分不得發布、開始或續跑任務；網路恢復後重新驗權再同步與執行。
+
+## 既有本地內容與明確分享
 
 1. 呼叫 `cloud_preview_publish`，指定本地 `agent`，以及 `kind: agent`、`skill` 或 `workflow`。單一 Skill／Workflow 分別傳 `skillId`／`workflowId`。`workspaceId: null` 為私人空間；指定團隊 ID 為共享空間。
 2. 工具整理完整套件並回傳預覽 token。展示角色用途、完整 SOP、檔案、Workflow 節點、依賴與發布空間，讓使用者 Double Check。
 3. 收到使用者對該預覽的明確確認後，呼叫 `agent_commit`，傳入 token 與確認原文 `userConfirmation`。
-4. 回報雲端資產 ID、revision 與位置。再次以 `agent_get`／`cloud_list` 讀回，區別「預覽完成」與「已發布」。
+4. 回報穩定本地 ID 與待同步狀態。同步完成後，再以 `agent_get`／`cloud_list` 讀回雲端資產 ID、revision 與位置，區別「本地已保存」與「雲端已儲存」。
 
-本地 Dashboard 的「把本地訓練成果上傳」提供相同的預覽／確認操作。原本的本地員工檔案保留，連線後的查詢與執行使用雲端內容。日後建立／修改 Agent，仍走 `agent_preview` → 展示完整 SOP → 明確 Double Check → `agent_commit`；已連線時工具會儲存到雲端。
+本地 Dashboard 的資料庫提供預覽／確認操作。原本的本地員工檔案保留，只有目前身分已驗證歸屬的舊資料可匯入。日後建立／修改 Agent，仍走 `agent_preview` → 展示完整 SOP → 明確 Double Check → `agent_commit`；確認後先保存本地，排入同步佇列。
 
-更新既有雲端套件需指定 `id` 與讀取時的 `expectedRevision`。若版本已被同仁更新，系統保留衝突內容並要求重新讀取、比較；不會自動覆蓋較新版本。
+明確發布至私人或團隊雲端空間時，更新需指定 `id` 與讀取時的 `expectedRevision`。若版本已被同仁更新，系統保留衝突內容，不會自動覆蓋較新版本。團隊 viewer 可以使用／複製；修改團隊版本須 editor／owner，私人副本不改變原分享資產。
 
 ## 換裝置與分享給同仁
 
@@ -79,7 +96,7 @@ Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台�
 
 ## 實際執行
 
-已連線後，`agent_prepare_run`／`workflow_prepare_run` 會取得授權的雲端版本。獨立 Skill、Workflow 或需要指定 revision 時，使用：
+登入且線上核准後，`agent_prepare_run`／`workflow_prepare_run` 可從本人本地定義或授權雲端內容準備任務；本地草稿若源自雲端／團隊資產，仍查核目前原資產的存取／membership。穩定本地 ID 為 `local:<uuid>`，雲端 ID 為 `cloud:<asset-id>`，同名項目必須用 ID 區別。尚未同步的獨立本地 Skill／Workflow 也可將本地 ID 交給這兩個 prepare 工具。獨立雲端 Skill、Workflow 或需要指定 revision 時，使用：
 
 ```json
 {
@@ -109,11 +126,11 @@ Edge Function `vixo-device-pair` 驗證並一次兌換有效碼後建立首台�
 
 正式 MCP、Dashboard 的雲端執行要求本次可驗證帳號已核准，並驗證資產權限。待審核、停用、無法取得即時核准狀態、session 過期、遭撤權或找不到資產時，會明確失敗，不自動回退到其他身分的快取或同名本地員工。
 
-同步模組提供內部 `allowOfflineCache: true` 選項，供明確選擇快取的整合使用；這不是目前 MCP 的預設或公開參數。即使用快取，也必須能從服務端即時確認同一帳號已核准；完全離線不能沿用以前的核准狀態越過審核。只有帳號核准仍可查、session 尚有效、資產 API 純網路失敗且快取 hash／revision 正確時，才可明確選用快取；401／403／404 或已知撤權不適用。快取結果必須標記「未能重新確認資產權限及最新版本」，不宣稱已完成最新同步。
+離線只保存本人本地草稿，不提供一般使用者離線執行入口。開始、續跑及排程都要即時確認目前帳號核准與原資產／membership，不能用固定 revision、舊 session 或本地複本省略此檢查。內部快取選項也不能擴張上述產品入口的執行權限。
 
 ## 註冊服務的技術邊界
 
-`vixo-register` 是刻意允許匿名呼叫的自訂註冊端點，部署時設定 `verify_jwt=false`。標準 Supabase 公開 `signUp` 保持停用，不啟用 SMTP 或寄信確認。自訂端點只接受 `username`、`password`、`displayName`；服務端建立 Auth 使用者後，006 的 Auth INSERT trigger 將帳號固定為 `pending`、非管理員。前端可取得 session 查看自己的狀態，業務 RLS／RPC 與本地執行入口仍要求目前核准。
+`vixo-register` 是允許未登入使用者的自訂註冊端點，部署時設定 `verify_jwt=false`，由函式精確驗證目前專案公開 API key；它只識別專案客戶端，不核准使用者。部署需包含與外掛公開設定一致的 `public-config.json`，輪替公開 key 時同步更新網站、外掛與 Edge 設定。標準 Supabase 公開 `signUp` 保持停用，不啟用 SMTP 或寄信確認。自訂端點只接受 `username`、`password`、`displayName`；服務端建立 Auth 使用者後，006 的 Auth INSERT trigger 將帳號固定為 `pending`、非管理員。前端可取得 session 查看自己的狀態，業務 RLS／RPC 與本地執行入口仍要求目前核准。
 
 每次有效註冊嘗試先透過 service-only `vixo_claim_registration_quota` 使用資料庫時鐘原子扣除配額：全域每小時最多 50 次，另加 IP 提示雜湊每 15 分鐘最多 5 次；重複帳號或建立失敗不退還配額。IP 提示只取有長度限制的 `X-Forwarded-For` 最後一段合法 IP，再以服務端金鑰做 HMAC-SHA-256；資料庫不存明文 IP 或密碼。不假定外部代理已清理該標頭；缺少、無效或遭偽造的 IP 提示也必須經過全域配額。這是目前限制建立成本的邊界，未部署 CAPTCHA，也不宣稱完全防止濫用。
 

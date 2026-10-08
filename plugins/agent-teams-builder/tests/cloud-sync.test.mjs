@@ -88,6 +88,37 @@ test("Agent export preserves portable code/resources and excludes memory, creden
   assert.equal(bundleHash(portable), bundleHash(validateCloudBundle(portable)));
 });
 
+test("metadata-first pull reuses immutable revision cache and downloads only the changed bundle", async () => {
+  const { client, state, sync } = fakeCloud(); let metadataReads = 0, bundleReads = 0;
+  const original = client.getAsset;
+  client.getAssetMetadata = async id => { metadataReads++; const { bundle: contents, ...asset } = state.assets.get(id); return structuredClone(asset); };
+  client.getAsset = async id => { bundleReads++; return original(id); };
+  await sync.pushAsset({ bundle });
+  await sync.pullAsset("asset-one"); await sync.pullAsset("asset-one");
+  assert.equal(metadataReads, 2); assert.equal(bundleReads, 0);
+  state.assets.set("asset-one", { ...state.assets.get("asset-one"), revision: 2 });
+  await sync.pullAsset("asset-one"); assert.equal(metadataReads, 3); assert.equal(bundleReads, 1);
+  const cached = await sync.pullAsset("asset-one");
+  fs.appendFileSync(path.join(cached.cacheDirectory, "skills", "summarize", "SKILL.md"), "tampered");
+  await assert.rejects(sync.pullAsset("asset-one"), /cached resource changed/); assert.equal(bundleReads, 1);
+});
+test("internal library cache demands the explicit bound user and local bundle preparation keeps all kinds local", async () => {
+  const { client, state } = fakeCloud(), sync = createCloudSync({ client, cloudRoot: path.join(temporary, "cloud"), userId: "account-a" });
+  const push = await sync.pushAsset({ bundle });
+  assert.throws(() => sync.readLibraryCache("account-b", "asset-one"), { code: "account_changed" });
+  assert.equal(sync.readLibraryCache("account-a", "asset-one", 1).revision, 1);
+  const id = "local:10000000-0000-4000-8000-000000000001";
+  for (const portable of [bundle, exportSkillBundle({ agent: source, agentDirectory: privateDirectory, skillId: "summarize" }), exportWorkflowBundle({ agent: source, agentDirectory: privateDirectory, workflowId: "review-flow" })]) {
+    const prepared = await sync.prepareLocalBundleRun({ bundle: portable, localId: id, task: "整理資料" });
+    assert.equal(prepared.cloud, undefined); assert.equal(prepared.local.id, id); assert.equal(prepared.local.userId, "account-a"); assert.equal(prepared.execution.mode, "current-host");
+    assert.ok(prepared.resources.every(file => fs.existsSync(file.localPath)));
+    if (portable.kind === "workflow") assert.equal(prepared.approvalMode, "manual");
+  }
+  state.user.id = "account-b";
+  await assert.rejects(sync.prepareLocalBundleRun({ bundle, localId: id, task: "整理" }), { code: "account_changed" });
+  assert.equal(push.ok, true);
+});
+
 test("standalone Skill and Workflow include their actual local dependency files", () => {
   const skill = exportSkillBundle({ agent: source, agentDirectory: privateDirectory, skillId: "summarize" });
   assert.equal(skill.kind, "skill");

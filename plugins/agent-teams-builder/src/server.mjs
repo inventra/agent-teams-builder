@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "./store.mjs";
-import { cloudStatus, cloudClient, cloudSync, listSourceAgents, getSourceAgent, prepareSourceRun, previewSourceAgent, commitSourcePreview, previewLocalPublish } from './cloud-service.mjs';
+import { cloudStatus, cloudClient, cloudSync, listSourceAgents, getSourceAgent, prepareSourceRun, previewSourceAgent, commitSourcePreview, previewLocalPublish, libraryState, syncLibrary, previewLibraryEntry, resolveLibraryConflict, requireAccount, assertAccount } from './cloud-service.mjs';
 
 const skillSchema = z.object({
   id: z.string(),
@@ -72,10 +72,14 @@ export function buildServer() {
   }, safe(commitSourcePreview));
   server.registerTool("agent_list", {
     title: "List VIXO Agent Teams",
-    description: "List authorized cloud Agents when this device is connected; otherwise list local Agents. Cloud is the source of truth for connected devices.",
+    description: "Sign in first. List this approved account’s merged local drafts and authorized cloud Agents from the local library, with background version synchronization.",
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
-  }, safe(async () => ({ ...(await cloudStatus()), agents: await listSourceAgents() })));
+  }, safe(async () => {
+    const state = await requireAccount({ allowOffline: true }), agents = await listSourceAgents();
+    assertAccount(state.user.id);
+    return { ...state, agents };
+  }));
   server.registerTool("agent_get", {
     title: "Read one Agent",
     description: "Get an Agent by English id, Chinese display name, or exact alias.",
@@ -95,18 +99,22 @@ export function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true }
   }, safe((input) => prepareSourceRun(input, true)));
   server.registerTool('cloud_status', { title: 'VIXO cloud connection', description: 'Read this device cloud connection status without returning credentials.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(cloudStatus));
-  server.registerTool('cloud_list', { title: 'List shared cloud content', description: 'List authorized Agent, Skill and Workflow cloud packages.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(() => cloudClient().listAssets()));
+  server.registerTool('cloud_list', { title: 'List shared cloud content', description: 'List authorized Agent, Skill and Workflow cloud packages.', inputSchema: {}, annotations: { readOnlyHint: true } }, safe(libraryState));
   server.registerTool('cloud_preview_publish', {
     title: 'Preview local content for cloud publication', description: 'Package a local Agent or one Skill/Workflow with dependencies. Show the full preview and obtain explicit confirmation before agent_commit. Personal memory and run data are excluded.',
     inputSchema: { agent: z.string(), kind: z.enum(['agent', 'skill', 'workflow']).default('agent'), skillId: z.string().optional(), workflowId: z.string().optional(), workspaceId: z.string().nullable().optional(), id: z.string().optional(), expectedRevision: z.number().int().nonnegative().optional() }
   }, safe(previewLocalPublish));
   server.registerTool('cloud_prepare_run', {
-    title: 'Prepare a cloud Agent, Skill or Workflow', description: 'Verify current cloud permissions, download the selected version and return a host-native execution prompt. Execute prepared.prompt in the current session. This does not grant extra ERP or external action permissions.',
+    title: 'Prepare a cloud Agent, Skill or Workflow', description: 'Verify current cloud permissions, reuse an unchanged verified local version or download a changed version, and return a host-native execution prompt. Execute prepared.prompt in the current session. This does not grant extra ERP or external action permissions.',
     inputSchema: { assetId: z.string(), revision: z.number().int().positive().optional(), task: z.string(), skill: z.string().optional(), workflow: z.string().optional() }, annotations: { readOnlyHint: true }
   }, safe((input) => cloudSync().prepareAssetRun(input)));
   server.registerTool('cloud_create_device_code', { title: 'Connect another personal device', description: 'Create a one-time ten-minute code for the SAME personal cloud identity on another device. Use only when the user asks to connect their own device; do not use this for coworker sharing.', inputSchema: {} }, safe(() => cloudClient().createDeviceCode()));
   server.registerTool('cloud_create_workspace', { title: 'Create a VIXO team space', description: 'Create a team sharing space owned by the currently connected identity.', inputSchema: { name: z.string() } }, safe(({ name }) => cloudClient().createWorkspace(name)));
   server.registerTool('cloud_create_invite', { title: 'Invite a coworker', description: 'Create a team invitation code. viewer can use/copy; editor can also publish shared versions. Return the code to the user; do not send messages to others.', inputSchema: { workspaceId: z.string(), role: z.enum(['viewer', 'editor']).default('viewer') } }, safe(({ workspaceId, role }) => cloudClient().createInvite(workspaceId, role)));
+  server.registerTool('library_sync', { title: 'Synchronize the local VIXO library', description: 'After sign-in, compare cloud revisions and flush previously confirmed local changes. Conflicting or uncertain writes are preserved; this never silently overwrites them.', inputSchema: {}, annotations: { destructiveHint: false } }, safe(() => syncLibrary({ force: true })));
+  server.registerTool('library_preview', { title: 'Preview a local Agent, Skill or Workflow edit', description: 'Validate and display the entire portable bundle before saving. Obtain explicit confirmation of content and sharing scope before library_commit.', inputSchema: { id: z.string().optional(), bundle: z.record(z.string(), z.unknown()), title: z.string().optional(), description: z.string().optional(), workspaceId: z.string().nullable().optional() } }, safe(previewLibraryEntry));
+  server.registerTool('library_commit', { title: 'Save a confirmed local edit', description: 'Persist the confirmed preview locally, then queue background synchronization. Return queued status accurately; never claim queued content is already in the cloud.', inputSchema: { token: z.string(), userConfirmation: z.string() } }, safe(commitSourcePreview));
+  server.registerTool('library_resolve', { title: 'Resolve a reviewed synchronization conflict', description: 'After showing both versions and receiving explicit confirmation, keep the cloud version or save the local work as a separate copy. No force overwrite.', inputSchema: { id: z.string(), resolution: z.enum(['remote', 'copy']), userConfirmation: z.string(), expectedHash: z.string(), remoteRevision: z.number().int().positive().nullable().optional() } }, safe(resolveLibraryConflict));
   server.registerTool("dashboard_open", {
     title: "Open the VIXO Agents Dashboard",
     description: "Start the local visual Agent, Skill, Workflow, run, and schedule dashboard, then open it in the user's browser.",

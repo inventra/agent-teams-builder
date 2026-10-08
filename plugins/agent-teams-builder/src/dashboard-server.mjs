@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
 import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
 import { getWorkbenchRun, readWorkbenchPreferences, saveWorkbenchPreferences, workbenchState } from "./workbench-store.mjs";
-import { cloudStatus, cloudClient, cloudSync, cloudConnected, cloudPortalUrl, listSourceAgents, prepareSourceRun, previewLocalPublish, commitSourcePreview } from './cloud-service.mjs';
+import { cloudStatus, cloudClient, cloudSync, cloudConnected, cloudPortalUrl, listSourceAgents, prepareSourceRun, previewLocalPublish, commitSourcePreview, requireAccount, assertAccount, ownsLegacy, invalidateAccountView, libraryState, libraryItem, syncLibrary, previewLibraryEntry, resolveLibraryConflict, importLegacy, listLocalAgents } from './cloud-service.mjs';
 import { renderSharedVideoPolicy } from "./shared-video-policy.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -261,7 +261,7 @@ export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "
   const prepared = preparedCloud || prepareWorkflowRun({ agent, workflow, task: task || "執行這個 Workflow", approvalMode });
   const selectedHost = chooseHost(host);
   const id = crypto.randomUUID();
-  const agentDirectory = prepared.cloud?.cacheDirectory || path.join(agentTeamsRoot(), prepared.agent.id);
+  const agentDirectory = prepared.cloud?.cacheDirectory || prepared.local?.cacheDirectory || path.join(agentTeamsRoot(), prepared.agent.id.replace(/^legacy:/, ''));
   const logFile = path.join(runsRoot(), `${id}.log`);
   fs.mkdirSync(runsRoot(), { recursive: true });
   const approvalNodes = prepared.workflow.nodes
@@ -271,6 +271,7 @@ export function startWorkflowRun({ agent, workflow, task, host, approvalMode = "
     id,
     agentId: prepared.agent.id,
     ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
+    ...(prepared.local ? { local: prepared.local } : {}),
     agentName: prepared.agent.displayName,
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
@@ -308,6 +309,7 @@ export function prepareNativeCodexRun({ agent, workflow, task, approvalMode = "m
     id,
     agentId: prepared.agent.id,
     ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
+    ...(prepared.local ? { local: prepared.local } : {}),
     agentName: prepared.agent.displayName,
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
@@ -412,18 +414,30 @@ function rejectWorkflowRun(id, message = "使用者拒絕這個核准節點") {
 }
 
 function publicRun(record) {
-  const { cloud, logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, workspacePath: _workspacePath, sessionId, ...safe } = record;
-  return { ...safe, ...(cloud ? { cloud: { assetId: cloud.assetId, revision: cloud.revision } } : {}), threadId: record.executionMode === "codex-app" ? sessionId || null : null, resumable: Boolean(sessionId) };
+  const { cloud, local, logFile: _logFile, lastMessageFile: _lastMessageFile, agentDirectory: _agentDirectory, workspacePath: _workspacePath, sessionId, ...safe } = record;
+  return { ...safe, ...(local ? { local: { id: local.id } } : {}), ...(cloud ? { cloud: { assetId: cloud.assetId, revision: cloud.revision } } : {}), threadId: record.executionMode === "codex-app" ? sessionId || null : null, resumable: Boolean(sessionId) };
 }
 
 export function cloudRecordVisible(record, userId = null) {
+  if (record?.local) return Boolean(userId && record.local.userId === userId);
   const isCloud = Boolean(record?.cloud || String(record?.agentId || '').startsWith('cloud:'));
   return isCloud ? Boolean(userId && record?.cloud?.userId === userId) : !userId;
 }
-async function visibilityFilter() {
-  let userId = null;
-  if (cloudConnected()) { const client = cloudClient(); userId = (await client.getUser()).id; await client.requireApproved(); }
-  return (record) => cloudRecordVisible(record, userId);
+function visibleTo(record, userId) {
+  return cloudRecordVisible(record, userId) || (!record?.cloud && !record?.local && ownsLegacy(userId, record?.agentId));
+}
+function assertPreparedAccount(prepared, userId) {
+  assertAccount(userId);
+  if ((prepared.cloud?.userId || prepared.local?.userId) !== userId) throw Object.assign(new Error('帳號已變更，請重新操作。'), { code: 'account_changed', status: 401 });
+}
+async function visibilityFilter({ fresh = false, allowOffline = false } = {}) {
+  const state = await requireAccount({ force: fresh, allowOffline });
+  assertAccount(state.user.id);
+  return record => visibleTo(record, state.user.id);
+}
+async function preferencesRoot() {
+  const state = await requireAccount({ allowOffline: true });
+  return path.join(ensureAgentTeamsRoot(), '.system', 'cloud', 'ui', state.user.id);
 }
 function recentRuns(visibleRecord = () => true) {
   fs.mkdirSync(runsRoot(), { recursive: true });
@@ -438,12 +452,19 @@ function recentRuns(visibleRecord = () => true) {
 
 async function dashboardState(update = null) {
   const codexProjects = availableHost("codex") ? listCodexProjects() : [];
-  const visible = await visibilityFilter();
+  const state = await requireAccount({ allowOffline: true });
+  const visible = record => visibleTo(record, state.user.id);
+  const library = await libraryState();
+  const agents = await listSourceAgents();
+  assertAccount(state.user.id);
+  if (library.userId !== state.user.id) throw Object.assign(new Error('帳號已變更。'), { code: 'account_changed', status: 401 });
   return {
+    library: library.entries.map(({ bundle, agent, ...entry }) => entry),
+    sync: library.sync,
     product: "VIXO Agents",
-    cloud: await cloudStatus(),
+    cloud: state,
     root: ensureAgentTeamsRoot(),
-    agents: await listSourceAgents(),
+    agents,
     schedules: readJson(schedulesFile(), []).filter(visible),
     runs: recentRuns(visible),
     hosts: { codex: availableHost("codex"), claude: availableHost("claude") },
@@ -454,17 +475,20 @@ async function dashboardState(update = null) {
 }
 
 async function upsertSchedule(input) {
+  const state = await requireAccount({ force: true });
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(input.time || "")) throw new Error("time must use 24-hour HH:MM format");
   const prepared = await prepareSourceRun({ agent: input.agentId, workflow: input.workflowId, task: input.task || "依排程執行 Workflow" }, true);
   const host = chooseHost(input.host);
   const schedules = readJson(schedulesFile(), []);
   const id = input.id || crypto.randomUUID();
   const existing = schedules.find((item) => item.id === id);
-  if (existing && !(await visibilityFilter())(existing)) throw new Error("Schedule not found");
+  assertPreparedAccount(prepared, state.user.id);
+  if (existing && !visibleTo(existing, state.user.id)) throw new Error("Schedule not found");
   const schedule = {
     id,
     agentId: prepared.agent.id,
     ...(prepared.cloud ? { cloud: prepared.cloud } : {}),
+    ...(prepared.local ? { local: prepared.local } : {}),
     workflowId: prepared.workflow.id,
     workflowName: prepared.workflow.name,
     task: prepared.task,
@@ -492,16 +516,21 @@ async function deleteSchedule(id) {
 }
 
 let schedulesProcessing = false;
-export async function processSchedules(now = new Date(), { prepareCloud = (input) => prepareSourceRun(input, true), prepareLocal = prepareWorkflowRun, launch = startWorkflowRun } = {}) {
+export async function processSchedules(now = new Date(), { prepareCloud = (input) => prepareSourceRun(input, true), prepareLocal = (input) => prepareSourceRun(input, true), launch = startWorkflowRun } = {}) {
   if (schedulesProcessing) return;
   schedulesProcessing = true;
   try {
   const schedules = readJson(schedulesFile(), []);
-  const currentCloudUser = cloudConnected() ? (await cloudClient().getUser()).id : null;
   const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   const date = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, "0"), String(now.getDate()).padStart(2, "0")].join("-");
-  for (const schedule of schedules) {
-    if (!schedule.enabled || schedule.time !== time || schedule.lastRunDate === date) continue;
+  const due = schedules.filter(schedule => schedule.enabled && schedule.time === time && schedule.lastRunDate !== date);
+  if (!due.length) return;
+  const state = await requireAccount({ force: true });
+  const currentCloudUser = state.user.id;
+  for (const schedule of due) {
+    assertAccount(currentCloudUser);
+    if (schedule.local && schedule.local.userId !== currentCloudUser) continue;
+    if (!schedule.cloud && !schedule.local && !ownsLegacy(currentCloudUser, schedule.agentId)) continue;
     if (String(schedule.agentId).startsWith("cloud:") && (!currentCloudUser || schedule.cloud?.userId !== currentCloudUser)) continue;
     schedule.lastRunDate = date;
     schedule.updatedAt = new Date().toISOString();
@@ -514,6 +543,7 @@ export async function processSchedules(now = new Date(), { prepareCloud = (input
     try {
       const input = { agent: schedule.agentId, workflow: schedule.workflowId, task: schedule.task, approvalMode: schedule.approvalMode || "manual" };
       const prepared = await (String(schedule.agentId).startsWith("cloud:") ? prepareCloud(input) : prepareLocal(input));
+      assertPreparedAccount(prepared, currentCloudUser);
       launch({
         agent: schedule.agentId,
         workflow: schedule.workflowId,
@@ -530,6 +560,7 @@ export async function processSchedules(now = new Date(), { prepareCloud = (input
         workflowId: schedule.workflowId,
         workflowName: schedule.workflowName,
         ...(schedule.cloud ? { cloud: schedule.cloud } : {}),
+        ...(schedule.local ? { local: schedule.local } : {}),
         host: schedule.host,
         status: "failed",
         startedAt: new Date().toISOString(),
@@ -559,19 +590,34 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === "OPTIONS") return send(response, 204, "");
         if (url.pathname === "/health") return send(response, 200, { status: "ok", product: "vixo-agents", pid: process.pid });
         if (url.pathname.startsWith("/api/") && !authOkay(request, token)) return send(response, 401, { error: "Unauthorized" });
+        if (request.method === 'GET' && url.pathname === '/api/session') return send(response, 200, await cloudStatus({ force: url.searchParams.get('force') === '1' }));
+        if (request.method === 'GET' && url.pathname === '/api/library') return send(response, 200, await libraryState());
+        if (request.method === 'GET' && url.pathname === '/api/library/item') return send(response, 200, await libraryItem(url.searchParams.get('id')));
+        if (request.method === 'POST' && url.pathname === '/api/sync') {
+          const input = await bodyJson(request); return send(response, 200, await syncLibrary({ force: input.force === true }));
+        }
+        if (request.method === 'POST' && url.pathname === '/api/library/prepare') {
+          const input = await bodyJson(request);
+          return send(response, 200, await prepareSourceRun({ agent: input.id, task: input.task || '依目前授權執行這個項目', approvalMode: 'manual' }));
+        }
+        if (request.method === 'POST' && url.pathname === '/api/library/preview') return send(response, 200, await previewLibraryEntry(await bodyJson(request)));
+        if (request.method === 'POST' && url.pathname === '/api/library/commit') return send(response, 200, await commitSourcePreview(await bodyJson(request)));
+        if (request.method === 'POST' && url.pathname === '/api/library/resolve') return send(response, 200, await resolveLibraryConflict(await bodyJson(request)));
+        if (request.method === 'POST' && url.pathname === '/api/library/import-legacy') return send(response, 200, await importLegacy(await bodyJson(request)));
         if (url.pathname.startsWith('/api/cloud/')) {
           const route = url.pathname.slice('/api/cloud/'.length);
           if (request.method === 'GET') {
-            if (route === 'status') return send(response, 200, await cloudStatus());
+            if (route === 'status') return send(response, 200, await cloudStatus({ force: true }));
             if (route === 'access') return send(response, 200, await cloudClient().getAccess());
             if (route === 'accounts') return send(response, 200, await cloudClient().listAccounts());
             if (route === 'assets') return send(response, 200, await cloudClient().listAssets());
             if (route === 'workspaces') return send(response, 200, await cloudClient().listWorkspaces());
-            if (route === 'local-agents') { await cloudClient().requireApproved(); return send(response, 200, listAgents()); }
+            if (route === 'local-agents') return send(response, 200, await listLocalAgents());
           }
           if (request.method === 'POST') {
             const input = await bodyJson(request);
             if (route === 'open-portal') return send(response, 200, await openCloudPortal());
+            if (['login', 'register', 'pair', 'disconnect', 'setup-account'].includes(route)) invalidateAccountView();
             if (route === 'login') return send(response, 200, await cloudClient().signInWithPassword({ username: input.username, password: input.password }));
             if (route === 'register') return send(response, 200, await cloudClient().registerAccount({ username: input.username, password: input.password, displayName: input.displayName }));
             if (route === 'account-status') return send(response, 200, await cloudClient().setAccountStatus(input.userId, input.status));
@@ -591,17 +637,20 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
           return send(response, 200, await dashboardState(update));
         }
         if (request.method === "GET" && url.pathname === "/api/workbench") {
-          const visible = await visibilityFilter();
+          const state = await requireAccount({ allowOffline: true });
+          const agents = await listSourceAgents();
+          assertAccount(state.user.id);
+          const visible = record => visibleTo(record, state.user.id);
           return send(response, 200, workbenchState(ensureAgentTeamsRoot(), {
             visibleRecord: visible,
             period: url.searchParams.get("period") || "today",
-            agents: await listSourceAgents(),
+            agents,
             schedules: readJson(schedulesFile(), []).filter(visible)
           }));
         }
         if (url.pathname === "/api/preferences/workbench") {
-          if (request.method === "GET") return send(response, 200, readWorkbenchPreferences(ensureAgentTeamsRoot()));
-          if (request.method === "POST") return send(response, 200, saveWorkbenchPreferences(ensureAgentTeamsRoot(), await bodyJson(request)));
+          if (request.method === "GET") return send(response, 200, readWorkbenchPreferences(await preferencesRoot()));
+          if (request.method === "POST") { const body = await bodyJson(request); return send(response, 200, saveWorkbenchPreferences(await preferencesRoot(), body)); }
         }
         const runDetail = url.pathname.match(/^\/api\/runs\/([^/]+)$/);
         if (request.method === "GET" && runDetail) {
@@ -619,29 +668,40 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
           return send(response, 202, startUpdate({ agentTeamsRoot: ensureAgentTeamsRoot(), runner: updateOptions.runner, spawnImpl: updateOptions.spawnImpl }));
         }
         if (request.method === "POST" && url.pathname === "/api/runs") {
+          const state = await requireAccount({ force: true });
           const body = await bodyJson(request);
+          assertAccount(state.user.id);
+          const source = await prepareSourceRun(body, true);
+          assertPreparedAccount(source, state.user.id);
           if (body.host === "codex" && body.executionMode === "codex-app") {
-            const prepared = prepareNativeCodexRun(body, await prepareSourceRun(body, true));
+            const prepared = prepareNativeCodexRun(body, source);
             return send(response, 202, { ...publicRun(prepared.record), nativeLaunch: prepared.nativeLaunch });
           }
-          return send(response, 202, publicRun(startWorkflowRun(body, await prepareSourceRun(body, true))));
+          return send(response, 202, publicRun(startWorkflowRun(body, source)));
         }
         const nativeResult = url.pathname.match(/^\/api\/runs\/([^/]+)\/native-result$/);
         if (request.method === "POST" && nativeResult) {
+          const state = await requireAccount({ force: true });
+          const body = await bodyJson(request);
+          assertAccount(state.user.id);
           const record = readJson(runFile(decodeURIComponent(nativeResult[1])), null);
-          if (!record || !(await visibilityFilter())(record)) return send(response, 404, { error: "Run not found" });
-          return send(response, 200, publicRun(finishNativeDispatch(decodeURIComponent(nativeResult[1]), await bodyJson(request))));
+          if (!record || !visibleTo(record, state.user.id)) return send(response, 404, { error: "Run not found" });
+          return send(response, 200, publicRun(finishNativeDispatch(decodeURIComponent(nativeResult[1]), body)));
         }
         const runAction = url.pathname.match(/^\/api\/runs\/([^/]+)\/(approve|reply|reject)$/);
         if (request.method === "POST" && runAction) {
+          const state = await requireAccount({ force: true });
           const id = decodeURIComponent(runAction[1]);
           const action = runAction[2];
           const body = await bodyJson(request);
+          assertAccount(state.user.id);
           const visibleRun = readJson(runFile(id), null);
-          if (!visibleRun || !(await visibilityFilter())(visibleRun)) return send(response, 404, { error: "Run not found" });
+          if (!visibleRun || !visibleTo(visibleRun, state.user.id)) return send(response, 404, { error: "Run not found" });
           if (action === "reject") return send(response, 200, publicRun(rejectWorkflowRun(id, body.message)));
           const existing = readJson(runFile(id), null);
-          if (existing?.cloud?.assetId) await cloudClient().getAsset(existing.cloud.assetId);
+          if (existing?.cloud?.assetId) await cloudClient().getAssetMetadata(existing.cloud.assetId);
+          if (existing?.local?.baseAssetId) await cloudClient().getAssetMetadata(existing.local.baseAssetId);
+          assertAccount(state.user.id);
           return send(response, 202, publicRun(resumeWorkflowRun(id, { action, message: body.message })));
         }
         if (request.method === "POST" && url.pathname === "/api/schedules") return send(response, 200, await upsertSchedule(await bodyJson(request)));
@@ -679,7 +739,9 @@ export async function serve({ port = defaultPort, token: restartToken } = {}) {
   writeJson(runtimeFile(), { pid: process.pid, port: actualPort, token, url: `http://127.0.0.1:${actualPort}/?token=${token}`, startedAt: new Date().toISOString() });
   processSchedules().catch((error) => process.stderr.write(`${error.message}\n`));
   const timer = setInterval(() => processSchedules().catch((error) => process.stderr.write(`${error.message}\n`)), 30_000);
+  const syncTimer = setInterval(() => { if (cloudConnected()) syncLibrary().catch(() => {}); }, 180_000);
   const stop = () => {
+    clearInterval(syncTimer);
     clearInterval(timer);
     try { fs.unlinkSync(runtimeFile()); } catch {}
     server.close(() => process.exit(0));

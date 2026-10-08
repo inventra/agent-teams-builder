@@ -100,3 +100,47 @@ export function searchWorkbench(state, runs, query) {
   });
   return results.filter((entry) => (entry.title + " " + entry.detail + " " + entry.id + " " + entry.agentId).toLocaleLowerCase().includes(needle)).slice(0, 40);
 }
+
+
+// A disconnected, pending or unverifiable identity can never open private views.
+export function dashboardSessionMode(session) {
+  if (!session?.connected || !session?.user?.id) return "disconnected";
+  if (session.access?.status === "pending") return "pending";
+  if (session.access?.status === "disabled") return "disabled";
+  if (session.access?.status !== "approved") return "unverified";
+  return session.offline ? "offline" : "approved";
+}
+export const SYNC_LABELS = Object.freeze({local:"僅在本機",pending:"等待同步",synced:"已同步",conflict:"版本衝突",uncertain:"同步結果待確認",error:"同步失敗"});
+export function visibleLibrary(entries, session, kind) {
+  const mode = dashboardSessionMode(session);
+  if (!["approved", "offline"].includes(mode)) return [];
+  return (entries || []).filter(entry => (!kind || entry.kind === kind) &&
+    (mode !== "offline" || entry.id?.startsWith("local:")));
+}
+export function validateAccountInput({username,password,confirmation,displayName}, mode="login") {
+  if (!/^[a-z][a-z0-9_-]{2,31}$/.test(username)) return "帳號需為 3–32 個小寫英文字母、數字、底線或連字號，並以英文字母開頭。";
+  if (typeof password !== "string" || !password.length) return "請輸入密碼。";
+  if (new TextEncoder().encode(password).length > 72) return "請縮短密碼，中文字元會佔用較多長度。";
+  if (mode !== "login" && [...password].length < 12) return "密碼至少需要 12 個字元。";
+  if (mode !== "login" && password !== confirmation) return "兩次輸入的密碼不一致。";
+  if (mode === "register" && (!displayName?.trim() || [...displayName.trim()].length > 80)) return "請輸入 1–80 個字元的姓名。";
+  return "";
+}
+export function draftBundleTemplate(kind="agent") {
+  const skill = { id: 'new-skill', name: '新技能', description: '請填寫這項技能的用途。', triggers: ['使用者指定這項技能'], allowedTools: [], steps: ['請在這裡填寫完整、可執行的工作步驟。'], successCriteria: ['確認完成使用者要求。'] };
+  const workflow = { id: 'new-workflow', name: '新流程', description: '請填寫這項流程的用途。', triggers: [], nodes: [{ id: 'first-step', name: '執行技能', type: 'skill', skillId: skill.id, instructions: '依技能的完整 SOP 執行。', requiresApproval: false }] };
+  const agent = { id: 'new-agent', displayName: '新 Agent', aliases: [], description: '請填寫這個角色的用途。', purpose: '依使用者指定的任務提供協助。', systemPrompt: '請依完整 SOP 與本次使用者授權執行工作；缺少資料時先確認。', memory: '', skills: [skill], workflows: [] };
+  return { formatVersion: 1, kind, spec: kind === 'agent' ? agent : kind === 'workflow' ? { ...workflow, skills: [skill] } : skill, files: [{ path: 'skills/new-skill/SKILL.md', content: '# 新技能\n\n請在此補上與 spec.steps 一致的完整工作步驟。\n' }], dependencies: [], requirements: { platforms: [], tools: [] } };
+}
+
+export function libraryWithAgentChildren(entries=[], agents=[]) {
+  const rows=[...entries];
+  for(const agent of agents) {
+    const parent=entries.find(entry=>entry.kind==="agent" && entry.id===agent.id);
+    if(!parent)continue;
+    for(const [kind,children] of [["skill",agent.skills||[]],["workflow",agent.workflows||[]]])
+      for(const child of children)rows.push({id:`${parent.id}/${kind}:${child.id}`,parentId:parent.id,parentTitle:parent.title,
+        kind,title:child.name,slug:child.id,description:child.description||"",syncState:parent.syncState,workspaceId:parent.workspaceId,revision:parent.revision});
+  }
+  return rows;
+}
