@@ -10,4 +10,4 @@
 
 安裝、相容性與完整使用方法請見壓縮包根目錄的 `README-安裝說明.md`。
 
-Plugin 另隨附共用 `erp-video-automation` 與 `expense-claim-helper`，供宿主處理 ERP 影片與 Windows 收據請款。完整程式及空白資料庫範本隨技能分發，個別員工 SOP 不會自動變更。請見 [ERP 共用技能說明](../../docs/ERP-VIDEO-AUTOMATION.md)。
+v1.8.0 隨附共用影片入口 `vixo-video-intake`：Agent 收到影片先判斷實際內容，與 ERP 有關就自動調用 `erp-video-automation`，產生自動化程式碼、完整輸入表單與驗證流程，無須使用者再指定技能。配套的 `expense-claim-helper` 處理 Windows 收據請款。一般 Agent、Workflow 與續跑共用這個規則，個別員工 SOP 不會自動變更。請見 [ERP 共用技能說明](../../docs/ERP-VIDEO-AUTOMATION.md)。

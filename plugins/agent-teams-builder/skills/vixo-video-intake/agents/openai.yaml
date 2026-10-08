@@ -1,0 +1,6 @@
+interface:
+  display_name: "VIXO 影片入口"
+  short_description: "讀取影片內容，ERP 影片自動轉交共用技能產生自動化程式碼"
+  default_prompt: "請使用 $vixo-video-intake，判斷我提供的影片；若與 ERP 有關，直接使用 erp-video-automation 產出自動化程式碼與輸入表單。"
+policy:
+  allow_implicit_invocation: true

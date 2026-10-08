@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
 import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
 import { getWorkbenchRun, readWorkbenchPreferences, saveWorkbenchPreferences, workbenchState } from "./workbench-store.mjs";
+import { renderSharedVideoPolicy } from "./shared-video-policy.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const webRoot = path.join(packageRoot, "web");
@@ -378,7 +379,7 @@ function resumeWorkflowRun(id, { action, message }) {
   const continuation = action === "approve"
     ? `使用者已明確核准目前的 Workflow 節點並回覆：${input}\n請從目前停下的節點後繼續，不要重做已完成的節點。`
     : `使用者回覆：${input}\n請使用這份資料從目前停下處繼續，不要重做已完成的節點。`;
-  spawnWorkflowTurn(record, `${continuation}${executionProtocol(record.approvalMode)}`, { resume: true });
+  spawnWorkflowTurn(record, `${renderSharedVideoPolicy()}\n\n${continuation}${executionProtocol(record.approvalMode)}`, { resume: true });
   return record;
 }
 

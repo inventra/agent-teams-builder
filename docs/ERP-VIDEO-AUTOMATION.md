@@ -4,16 +4,31 @@
 
 | 共用 Skill | 用途 |
 |---|---|
+| [vixo-video-intake](../plugins/agent-teams-builder/skills/vixo-video-intake/SKILL.md) | 收到影片時讀取實際內容，判斷 ERP／非 ERP／資訊不足；ERP 影片自動轉交下一個技能 |
 | [erp-video-automation](../plugins/agent-teams-builder/skills/erp-video-automation/SKILL.md) | 整理 ERP 影片、抽影格、建立輸入契約／表單與獨立流程，依標籤驗證及執行 |
 | [expense-claim-helper](../plugins/agent-teams-builder/skills/expense-claim-helper/SKILL.md) | Windows Cosmos ERP PCMI10 單筆員工收據請款、單次儲存、查回及最後畫面核對 |
 
-兩個技能必須一起保留。共用 Plugin Skill 由 Codex／Claude Code 宿主使用，不會自動改寫員工 SOP 或加入每位員工的 Dashboard 技能卡片。需要將流程寫入某位員工時，另依既有的 SOP 預覽與 Double Check 流程處理。
+上述三個共用技能隨 Plugin 一起保留；ERP 工坊與請款執行器是配套依賴。共用 Plugin Skill 由 Codex／Claude Code 宿主使用，不會自動改寫員工 SOP 或加入每位員工的 Dashboard 技能卡片。需要將流程寫入某位員工時，另依既有的 SOP 預覽與 Double Check 流程處理。
+
+## v1.8.0 自動影片路由
+
+使用者在 VIXO Agent 的宿主對話附加或指定可讀取影片時，不必先輸入 `erp-video-automation`。Agent 先查看實際影格、必要的音軌／字幕及本次說明，判斷是否與 ERP 有關；不是只看檔名或副檔名。
+
+與 ERP 有關就自動讀取完整共用技能並執行新影片流程：來源登錄與 hash、實際步驟和時間戳、`workflow.md`、`input.schema.json`、全空白 `input.template.json`、`input.html`、`run.py` 及離線驗證。多個獨立作業分開存放；不把抽影格、文字摘要或空殼程式當成交付。
+
+一般 Agent 與 Workflow 的準備內容，以及 Dashboard Play／排程／續跑，都包含同一份影片規則。直接在已載入 VIXO Plugin 的宿主對話附影片，則由 `vixo-video-intake` 自動匹配。判斷由目前 Codex／Claude Code Session 使用其影片、檔案與影格工具完成；Plugin 不另設影像分類服務，也不在沒有可讀影片時假裝已判斷。
+
+非 ERP 影片接續原任務。證據不足時只詢問下一步必要的資訊；缺少操作畫面、未知控制項或未驗證分支保留待校準，不能拿收據範例補成別支影片的程式。
 
 ## 更新與使用
 
 在 VIXO Agents 頁面按「檢查更新」與「立即更新」，完成後開新 Session。已有一鍵安裝器的使用者也可再次執行安裝器，它會同步 GitHub `main`。本次新增共用 Skill 不需另外建立員工。
 
 可在對話中說：
+
+> （附上影片）幫我處理這支影片。
+
+Agent 會先判斷內容；若與 ERP 有關，直接轉成自動化程式碼及輸入表單。
 
 > 使用 $erp-video-automation，把這段 ERP 操作影片整理成有標籤、完整輸入表單及驗證流程的自動化。
 

@@ -1,6 +1,21 @@
-# VIXO Agent Teams Builder 1.7.0 測試報告
+# VIXO Agent Teams Builder 1.8.0 測試報告
 
-測試日期：2026-10-01（Asia/Taipei）
+測試日期：2026-10-08（Asia/Taipei）；下方歷史版本各自保留原驗證範圍。
+
+## v1.8.0 本機驗證
+
+- `npm test`：64 PASS、0 FAIL、1 SKIP；包含 13 項安裝／更新與 51 項 Plugin 回歸。SKIP 仍是需 live Codex CDP 的實機側欄測試。
+- ERP 共用工具：43 項離線測試通過，涵蓋完整輸入 gate、影片登錄、假桌面請款、防重送及搬移後技能尋址；不操作 ERP。
+- 新增 6 項影片規則整合測試，涵蓋兩位不同 Agent、普通／明確共用技能選擇、Workflow 手動／自動核准、既有紀錄的 reply／approve 續跑，以及含空白路徑的 Plugin 搬移。Agent 私人檔案逐項讀回，確認共用路由沒有修改它們。
+- 新入口 `vixo-video-intake` 保持自動技能選擇；影片與 ERP 有關即轉交 `erp-video-automation`。實際檔案路徑由目前 Plugin 位置解析，不寫死開發機或員工技能目錄。
+- 全部 6 個 Skill 的 YAML 前言與相對文件連結、7 個版本欄位（含 lockfile 根 package）及 Git whitespace 檢查通過。
+
+### v1.8.0 驗證邊界
+
+- 分類由目前 Codex／Claude Code 宿主查看影片內容後完成。本次驗證涵蓋共用規則、路徑、Prompt 傳遞與續跑整合；未用新真實影片完成「分類 → 自動化程式碼」的模型端到端實跑，也未新增或修改 ERP 實單。
+- Dashboard 既有任務／續跑欄位仍接收文字；影片可附在原生宿主對話，背景任務／排程則提供可讀取的影片檔案路徑或連結。
+- ERP 關聯性與操作證據完整性分開判斷。ERP 產品介紹／訓練仍交由技能評估，缺少可辨識步驟時保留 `draft/needs_calibration`，不得虛構可執行結果。日期區間收據查詢仍未校準。
+- 發行檔對應固定來源 commit，包含三個配套共用技能與程式／空表單；GitHub Windows／macOS 回歸及真實宿主 CLI 安裝結果，以該版本 commit 對應的 Actions 紀錄為準。
 
 ## v1.7.0 已通過
 

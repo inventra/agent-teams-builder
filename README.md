@@ -4,7 +4,7 @@
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.7.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.8.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。
@@ -38,9 +38,11 @@
 - Play 可選擇「遇核准節點暫停」或「本次自動核准」；等待資料與等待核准會分開顯示，並可在 Dashboard 原 Session 續跑。
 - Codex 仍可改選「背景 CLI 執行」；Claude Code 與排程使用已登入的宿主 CLI，不另外調用模型 API。
 
-## 共用 Skill：ERP 影片自動化工坊
+## v1.8.0：影片自動判斷與 ERP 程式碼產生
 
-Plugin 隨附 `erp-video-automation`（影片整理、標籤、完整輸入表單與執行 gate）及其相依技能 `expense-claim-helper`（Windows Cosmos ERP 收據請款）。更新 VIXO 後開新 Session 即可由宿主使用；共用技能不會自動修改個別員工的 SOP。範例資料庫、使用方式、Windows 需求與尚未校準的日期區間查詢，請見 [ERP 共用技能說明](docs/ERP-VIDEO-AUTOMATION.md)。
+VIXO Agent 收到影片後，會先閱讀實際影格與相關說明，判斷是否與 ERP 操作有關。若與 ERP 有關，就自動調用共用 `erp-video-automation`，將錄影流程產出成自動化程式碼、完整輸入契約、空白範本與離線表單；使用者不需先說出技能名稱。一般 Agent、Workflow、Dashboard Play／排程及續跑任務共用這個規則；直接在宿主對話附影片時，`vixo-video-intake` 提供自動技能入口。
+
+Plugin 同時隨附相依技能 `expense-claim-helper`（Windows Cosmos ERP 收據請款）。更新 VIXO 後開新 Session 即可載入；共用路由不會改写個別員工的 SOP。影片無法讀取或操作證據不足時，會列出待補資料；未校準流程不標成可執行。範例資料庫、使用方式、Windows 需求與尚未校準的日期區間查詢，請見 [ERP 共用技能說明](docs/ERP-VIDEO-AUTOMATION.md)。
 
 ## v1.7.0：Docs 工作台
 
@@ -77,6 +79,7 @@ Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位�
 
 ## 驗證狀態
 
+- v1.8.0 本機 Node 回歸 64 通過、0 失敗、1 個 live Codex CDP 測試 skip；ERP 工具另有 43 項離線測試通過。新影片規則涵蓋普通 Agent、Workflow、舊紀錄續跑與搬移後的公用技能尋址；沒有以本次結果宣稱新影片模型端到端實跑或 ERP 實單已驗證。
 - v1.7.0 本機程式回歸 58 通過、0 失敗、1 個需 live Codex CDP 的環境測試 skip。
 - 隔離瀏覽器另驗證工作台 9 組、图示 4 組、嵌入生命週期 3 組與雙側欄點擊 7 組；不是 Codex App 實機端到端證據。最新桌面重載仍需使用者確認。
 - Claude Code strict validator 與 Codex Plugin validator 通過。

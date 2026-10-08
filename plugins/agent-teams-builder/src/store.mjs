@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { renderSharedVideoPolicy, sharedVideoSkill, sharedVideoSkillPaths } from "./shared-video-policy.mjs";
 
 const AGENT_SCHEMA_VERSION = 2;
 const DRAFT_TTL_MS = 15 * 60 * 1000;
@@ -419,13 +420,15 @@ export function prepareRun({ agent: reference, task, skill: requestedSkill }) {
   let selected;
   if (requestedSkill) {
     const needle = requestedSkill.trim().toLocaleLowerCase("zh-TW");
-    selected = agent.skills.find((skill) => [skill.id, skill.name].some((value) => value.toLocaleLowerCase("zh-TW") === needle));
+    selected = agent.skills.find((skill) => [skill.id, skill.name].some((value) => value.toLocaleLowerCase("zh-TW") === needle)) || sharedVideoSkill(requestedSkill);
     assert(selected, `Skill not found: ${requestedSkill}`);
   } else {
     const normalizedTask = cleanTask.toLocaleLowerCase("zh-TW");
     selected = agent.skills.find((skill) => skill.triggers.some((trigger) => normalizedTask.includes(trigger.toLocaleLowerCase("zh-TW")))) || agent.skills[0];
   }
   const prompt = [
+    renderSharedVideoPolicy(),
+    "",
     agent.systemPrompt,
     "",
     `你現在以 ${agent.displayName} 身分工作。`,
@@ -446,6 +449,7 @@ export function prepareRun({ agent: reference, task, skill: requestedSkill }) {
     execution: {
       mode: "current-host",
       supportedHosts: ["codex", "claude-code"],
+      sharedVideoPolicy: { classification: "host-inspection", ...sharedVideoSkillPaths() },
       instruction: "Execute this prompt with the current Codex or Claude Code session and its available tools. Do not call a separate model API."
     },
     prompt
@@ -464,6 +468,8 @@ export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkfl
     ? "使用者在 Dashboard 啟動本次執行時，已明確核准這個 Workflow 中所有 approval 或 requiresApproval 節點；不要在這些 Workflow 節點停下。這不會繞過 Codex／Claude Code 本身的工具權限與安全規則。"
     : "請依序執行節點；遇到 approval 或 requiresApproval 節點必須停下來取得使用者明確確認。";
   const prompt = [
+    renderSharedVideoPolicy(),
+    "",
     agent.systemPrompt,
     "",
     `你現在以 ${agent.displayName} 身分執行 Workflow：${workflow.name}。`,
@@ -490,6 +496,7 @@ export function prepareWorkflowRun({ agent: reference, workflow: requestedWorkfl
     execution: {
       mode: "host-cli",
       supportedHosts: ["codex", "claude-code"],
+      sharedVideoPolicy: { classification: "host-inspection", ...sharedVideoSkillPaths() },
       requiresApprovalNodes: workflow.nodes.some((node) => node.requiresApproval),
       approvalMode,
       instruction: "Run with the installed and signed-in Codex or Claude Code CLI. No separate Anthropic/OpenAI API key is used."
