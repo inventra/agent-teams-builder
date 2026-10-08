@@ -1,6 +1,6 @@
 ---
 name: build-agent
-description: 登入後建立或修改 VIXO Agent，將目前 Session／Workflow 轉成可重用 SOP。完整 Double Check 後先保存本人本地草稿與同步佇列，並提供私人／團隊分享與衝突處理。
+description: 登入後建立或修改 VIXO Agent，將目前 Session／Workflow 轉成可重用 SOP。完整 Double Check 後預設僅保存本人本機草稿，明確開啟後才同步，並提供私人／團隊分享與衝突處理。
 ---
 
 # 建立與修改 Agent
@@ -15,8 +15,8 @@ description: 登入後建立或修改 VIXO Agent，將目前 Session／Workflow 
 6. 修改前呼叫 `agent_get`，保留未被要求變更的內容與原有 Workflows。以 `local:<uuid>`／`cloud:<asset-id>` 指定資料庫項目，保留工具回傳的目前 bundleHash、localHash 與遠端 revision，原樣帶入工具要求的欄位。不要將這些參照當成英文 spec.id；私人同步與團隊分享的目標空間必須明確。
 7. 呼叫 `agent_preview`，完整展示名稱、用途、系統提示詞、每個 Skill 的 SOP、Workflow 節點、附加資源、依賴與儲存空間。預覽不代表已發布。
 8. 明確詢問一次 Double Check，例如：「以上是完整 SOP 與發布位置，是否確認儲存這個版本？」
-9. 只有在使用者後續訊息明確確認該預覽後，才呼叫 `agent_commit`，把確認原文放入 `userConfirmation`。沉默或含糊回覆不算確認；不得繞過 preview token 或直接寫檔。確認後先保存本人本地定義與持久同步佇列，回傳穩定本地 ID；不改寫原私人 SOP 資料夾。
-10. 每 180 秒嘗試同步，或使用 `library_sync` 手動同步。遇到版本衝突先完整比較，使用 `library_resolve` 選採用遠端／另存副本，傳入目前 bundleHash（`expectedHash`）與遠端 revision（`remoteRevision`），同步器另核對本地 localHash；不得強制覆寫。回復舊內容同樣發布新版本，保留歷史。
+9. 只有在使用者後續訊息明確確認該預覽後，才呼叫 `agent_commit`，把確認原文放入 `userConfirmation`。沉默或含糊回覆不算確認；不得繞過 preview token 或直接寫檔。確認後預設僅保存本人本機定義（`syncMode: local-only`，回傳 `saved-local`），回傳穩定本地 ID；不改寫原私人 SOP 資料夾。
+10. 使用者明確要求同步時，在預覽傳 `syncMode: cloud` 並展示私人／團隊目的地；既有本機草稿須展示完整內容與範圍，取得明確確認後用 `library_enable_sync` 傳 id、bundleHash（expectedHash）、localHash（expectedLocalHash）與確認原文。僅已開啟同步項目每 180 秒嘗試同步，或使用 `library_sync` 手動同步；後者不會自動加入僅存本機草稿。遇到版本衝突先完整比較，使用 `library_resolve` 選採用遠端／另存副本，傳入目前 bundleHash（`expectedHash`）與遠端 revision（`remoteRevision`），同步器另核對本地 localHash；不得強制覆寫。回復舊內容同樣發布新版本，保留歷史。
 11. 回報穩定 ID、Skills／Workflows 與本地／同步狀態。「本地已保存、待同步」不代表雲端已儲存；用讀取工具確認實際結果，未同步草稿只留原裝置。
 
 若需求是把既有本地員工或其中一項 Skill／Workflow 分享到雲端，使用 `cloud_preview_publish` → 展示完整內容 → 使用者明確確認 → `agent_commit`；沿用同一次內容確認，不另加不必要的核准流程。

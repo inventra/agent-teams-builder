@@ -128,13 +128,21 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     assert(bundleHash(bundle) === value.bundleHash && hash(value.payload) === value.localHash, "Library draft hash mismatch", "cache_tampered");
     return value;
   }
+  // Pre-policy drafts were all confirmed for synchronization. Preserve that
+  // authorization without rewriting their immutable records.
+  function syncMode(payload) {
+    const mode = payload.syncMode ?? "cloud";
+    assert(["local-only", "cloud"].includes(mode), "Invalid draft sync mode", "cache_tampered");
+    return mode;
+  }
   function entry(head) {
     const value = draft(head), payload = value.payload;
     // Content can stay identical while an acknowledged write advances its base
     // identity/revision. Include both the immutable version and that anchor in
     // the edit token, so an old approval cannot target the new base accidentally.
     const localHash = hash({ payloadHash: value.localHash, versionId: value.versionId, assetId: head.assetId || payload.id, revision: head.revision ?? payload.expectedRevision });
-    return { id: head.id, assetId: head.assetId || payload.id || null, ownerId: head.ownerId || userId, kind: payload.kind, slug: payload.slug, title: payload.title, description: payload.description,
+    const assetId = head.assetId || payload.id || null;
+    return { id: head.id, assetId, hasCloudCopy: Boolean(assetId), syncMode: syncMode(payload), ownerId: head.ownerId || userId, kind: payload.kind, slug: payload.slug, title: payload.title, description: payload.description,
       revision: head.revision ?? payload.expectedRevision, workspaceId: payload.workspaceId, bundle: value.payload.bundle, bundleHash: value.bundleHash, localHash,
       syncState: head.status === "sending" ? "pending" : head.status, ...(head.remoteRevision !== undefined ? { remoteRevision: head.remoteRevision } : {}), ...(head.error ? { error: head.error } : {}) };
   }
@@ -145,7 +153,7 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
       const clean = metadata(asset); if (shadowed.has(clean.id)) continue;
       let cached; try { cached = cloud.readLibraryCache(userId, clean.id, clean.revision); } catch (error) { if (["cache_unavailable", "forbidden"].includes(error.code)) continue; throw error; }
       const digest = bundleHash(cached.bundle);
-      entries.push({ ...clean, ...metadata(cached.asset), id: `cloud:${clean.id}`, assetId: clean.id, bundle: cached.bundle, bundleHash: digest, localHash: digest, syncState: "synced" });
+      entries.push({ ...clean, ...metadata(cached.asset), id: `cloud:${clean.id}`, assetId: clean.id, hasCloudCopy: true, syncMode: "cloud", bundle: cached.bundle, bundleHash: digest, localHash: digest, syncState: "synced" });
     }
     const pendingCount = local.filter((value) => ["local", "pending"].includes(value.syncState)).length;
     const conflictCount = local.filter((value) => ["conflict", "uncertain", "error"].includes(value.syncState)).length;
@@ -159,29 +167,45 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     const expectedRevision = input.expectedRevision ?? (id ? null : 0);
     assert(Number.isSafeInteger(expectedRevision) && expectedRevision >= 0 && (id ? expectedRevision > 0 : expectedRevision === 0), "Invalid expected revision");
     assert(!input.kind || input.kind === bundle.kind, "Draft kind does not match bundle");
-    const result = { id, kind: bundle.kind, slug: input.slug || bundle.spec.id, title: input.title || bundle.spec.displayName || bundle.spec.name, description: input.description || "", bundle, workspaceId, expectedRevision, message: input.message || "" };
+    const mode = input.syncMode ?? (id || workspaceId ? "cloud" : "local-only");
+    assert(["local-only", "cloud"].includes(mode), "Invalid draft sync mode");
+    if (mode === "local-only" && (id || workspaceId)) throw fault("Cloud identities and team scope cannot become local-only", "sync_mode_locked", 409);
+    const result = { id, kind: bundle.kind, slug: input.slug || bundle.spec.id, title: input.title || bundle.spec.displayName || bundle.spec.name, description: input.description || "", bundle, workspaceId, expectedRevision, message: input.message || "", syncMode: mode };
     for (const field of ["slug", "title", "description", "message"]) assertCloudShareableText(result[field], field);
     assert(/^[a-z0-9][a-z0-9_-]{0,127}$/i.test(result.slug) && result.title.trim() && result.title.length <= 200, "Invalid draft slug/title");
     return result;
   }
   function stageUnlocked(input) {
-    const payload = normalize(input), id = input.localId ? localId(input.localId) : `local:${crypto.randomUUID()}`;
+    const id = input.localId ? localId(input.localId) : `local:${crypto.randomUUID()}`;
     const previous = read(headFile(id), true);
+    const payload = normalize({ ...input, syncMode: input.syncMode ?? (previous ? syncMode(draft(previous).payload) : undefined) });
     if (previous) {
       assert(previous.userId === userId && !previous.archived, "Draft is not available");
       const old = draft(previous);
       if (!input.expectedLocalHash || input.expectedLocalHash !== entry(previous).localHash) throw fault("Local draft changed; compare it again", "local_draft_conflict", 409);
+      if (payload.syncMode === "local-only" && (previous.assetId || previous.attempt || previous.status === "sending")) throw fault("A cloud write is already anchored or in progress", "sync_mode_locked", 409);
       if (payload.kind !== old.payload.kind || payload.workspaceId !== old.payload.workspaceId || payload.id !== (previous.assetId || old.payload.id)) throw fault("Cannot change draft identity/scope", "local_draft_conflict", 409);
       if (["uncertain", "conflict", "error"].includes(previous.status)) throw fault("Resolve the existing draft before editing it", "local_draft_conflict", 409);
       if (previous.status !== "sending" && payload.expectedRevision !== (previous.revision ?? old.payload.expectedRevision)) throw fault("Draft base revision changed", "local_draft_conflict", 409);
     }
     const versionId = crypto.randomUUID(), value = { userId, localId: id, versionId, payload, bundleHash: bundleHash(payload.bundle), localHash: hash(payload), createdAt: timestamp() };
     durable(target("drafts", id.slice(6), `${versionId}.json`), value, true);
-    const next = { userId, id, versionId, status: "pending", assetId: payload.id, revision: payload.expectedRevision, ownerId: previous?.ownerId || userId,
+    const next = { userId, id, versionId, status: payload.syncMode === "local-only" ? "local-only" : "pending", assetId: payload.id, revision: payload.expectedRevision, ownerId: previous?.ownerId || userId,
       ...(previous?.attempt ? { attempt: previous.attempt } : {}), createdAt: previous?.createdAt || timestamp(), updatedAt: timestamp() };
     durable(headFile(id), next); return entry(next);
   }
   function stageConfirmed(input) { return locked(() => stageUnlocked(input)); }
+  function enableSync(id, { expectedLocalHash } = {}) {
+    localId(id);
+    return locked(() => {
+      const head = read(headFile(id), true);
+      if (!head || head.userId !== userId || head.archived) throw fault("Local draft is unavailable", "not_found", 404);
+      const current = entry(head), value = draft(head);
+      if (!expectedLocalHash || current.localHash !== expectedLocalHash) throw fault("Local draft changed; compare it again", "revision_conflict", 409);
+      if (current.syncMode !== "local-only" || head.status !== "local-only" || current.assetId || current.workspaceId || head.attempt) throw fault("Only an unsubmitted local-only draft can enable sync", "sync_mode_locked", 409);
+      return stageUnlocked({ ...value.payload, localId: id, expectedLocalHash, syncMode: "cloud" });
+    });
+  }
   async function currentUser() {
     const current = await client.getUser(); assert(current?.id === userId, "Library account changed", "account_changed");
     if (typeof client.requireApproved === "function") { const access = await client.requireApproved(); assert(access.userId === userId, "Library account changed", "account_changed"); }
@@ -214,7 +238,7 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
         if (!remote) { head.archived = true; head.archivedAt = timestamp(); head.resolution = "access_revoked"; durable(headFile(head.id), head); continue; }
         if (remote.revision !== head.revision) {
           const cached = cloud.readLibraryCache(userId, remote.id, remote.revision), versionId = crypto.randomUUID();
-          const payload = normalize({ ...remote, id: remote.id, bundle: cached.bundle, expectedRevision: remote.revision });
+          const payload = normalize({ ...remote, id: remote.id, bundle: cached.bundle, expectedRevision: remote.revision, syncMode: "cloud" });
           const value = { userId, localId: head.id, versionId, payload, bundleHash: bundleHash(payload.bundle), localHash: hash(payload), createdAt: timestamp() };
           durable(target("drafts", head.id.slice(6), `${versionId}.json`), value, true);
           head.versionId = versionId; head.revision = remote.revision; head.ownerId = remote.ownerId; head.updatedAt = timestamp(); durable(headFile(head.id), head);
@@ -268,7 +292,7 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     await currentUser(); acknowledge(head, attempt, { ...asset, bundle: history.bundle });
   }
   async function flush(head, assets) {
-    if (head.archived || !["local", "pending"].includes(head.status) || head.attempt) return;
+    if (head.archived || !["local", "pending"].includes(head.status) || head.attempt || syncMode(draft(head).payload) !== "cloud") return;
     await currentUser();
     // Check membership before the sending checkpoint; a read failure is safe to retry.
     if (head.assetId) {
@@ -279,7 +303,9 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     }
     const attempt = locked(() => {
       const latest = read(headFile(head.id)); if (latest.attempt || !["local", "pending"].includes(latest.status)) return null;
-      const value = draft(latest), payload = effective(latest, value);
+      const value = draft(latest);
+      if (syncMode(value.payload) !== "cloud") return null;
+      const payload = effective(latest, value);
       const record = { id: crypto.randomUUID(), versionId: latest.versionId, payload, bundleHash: value.bundleHash, baselineIds: assets.map((item) => item.id), startedAt: timestamp() };
       durable(target("attempts", `${record.id}.json`), { userId, localId: latest.id, ...record }, true);
       latest.attempt = record; latest.status = "sending"; durable(headFile(latest.id), latest); return record;
@@ -373,7 +399,7 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     assert(remote.kind === input.kind && remote.workspaceId === input.workspaceId && remote.slug === input.slug, "Remote conflict identity changed", "revision_conflict");
     await rememberRemote(remote); await currentUser();
     const cached = cloud.readLibraryCache(userId, remote.id, remote.revision), digest = bundleHash(cached.bundle);
-    return { ...remote, ...metadata(cached.asset), id: `cloud:${remote.id}`, assetId: remote.id, bundle: cached.bundle, bundleHash: digest, localHash: digest, syncState: "synced" };
+    return { ...remote, ...metadata(cached.asset), id: `cloud:${remote.id}`, assetId: remote.id, hasCloudCopy: true, syncMode: "cloud", bundle: cached.bundle, bundleHash: digest, localHash: digest, syncState: "synced" };
   }
   async function conflictRemote(id) {
     localId(id); await currentUser();
@@ -396,7 +422,8 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
       let copied;
       if (resolution === "copy") {
         const slug = `${value.payload.slug.slice(0, 110)}-copy-${crypto.randomUUID().slice(0, 8)}`;
-        copied = stageUnlocked({ ...value.payload, id: null, expectedRevision: 0, slug });
+        // Resolving an existing cloud conflict preserves its explicit sync scope.
+        copied = stageUnlocked({ ...value.payload, id: null, expectedRevision: 0, slug, syncMode: syncMode(value.payload) });
       }
       head.archived = true; head.archivedAt = timestamp(); head.resolution = resolution; durable(headFile(id), head);
       if (remote) { const catalog = manifest(); catalog.assets = [...catalog.assets.filter((asset) => asset.id !== remote.id), remote]; writeManifest(catalog); }
@@ -404,5 +431,5 @@ export function createLocalLibrary({ client, cloudRoot, userId, now = Date.now }
     });
     return { ...result, snapshot: snapshot() };
   }
-  return { snapshot, stageConfirmed, sync, conflictRemote, resolveConflict };
+  return { snapshot, stageConfirmed, enableSync, sync, conflictRemote, resolveConflict };
 }

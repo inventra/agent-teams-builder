@@ -14,11 +14,14 @@ description: 管理登入後的 VIXO 本地／雲端合併資料庫，查看 Age
 - 既有已連線裝置尚未設定帳號：在「雲端同步」選「設定帳號密碼」。沿用目前 UUID、私人 Agent、版本與團隊權限，不另外建立空白帳號。進階團隊邀請配對仍保留，但新身分仍須 Kevin 核准；bootstrap 由專案管理者建立，客戶端不能自行提升權限。
 - 自己換裝置：可直接以 VIXO 帳號密碼登入；使用者要求時也可呼叫 `cloud_create_device_code`。這是相同身分的一次性 10 分鐘換機碼，會取得同一份私人內容與團隊權限，只交給該使用者自己的裝置。
 - 分享給同仁：呼叫 `cloud_create_workspace` 建立團隊；owner 使用 `cloud_create_invite`，角色選 `viewer`（使用／複製）或 `editor`（另可更新團隊版本）。同仁透過邀請碼加入自己的身分；不能以換機碼代替團隊邀請。將碼交給使用者自行分享，不自動聯絡其他人。
-- 建立／修改 Agent：切換到 `build-agent`，走 `agent_preview` → 完整 SOP → Double Check → `agent_commit`；獨立 Skill／Workflow 使用 `library_preview`／`library_commit`。確認後先保存本地與持久佇列，不能把待同步回覆說成雲端已儲存。
-- 以 `library_sync` 手動同步；外掛每 180 秒嘗試同步。衝突先比較兩份完整內容，再以 `library_resolve` 選採用遠端／另存副本，傳入目前 bundleHash（`expectedHash`）／遠端 revision（`remoteRevision`），同步器另核對本地 localHash。不得強制覆寫或遺棄衝突稿。
+- 建立／修改 Agent：切換到 `build-agent`，走 `agent_preview` → 完整 SOP → Double Check → `agent_commit`；獨立 Skill／Workflow 使用 `library_preview`／`library_commit`。確認後預設僅保存本機（`syncMode: local-only`），回報 `saved-local`。使用者明確要求雲端同步時才在預覽帶 `syncMode: cloud`，並展示分享範圍；不能把 `queued` 回覆說成雲端已儲存。
+- 已保存的本機草稿需先展示完整內容與私人／團隊範圍，再依使用者明確確認呼叫 `library_enable_sync`，傳入 id、目前 bundleHash（expectedHash）、localHash（expectedLocalHash）與確認原文。不得因使用者按「立即同步」就將所有僅存本機資料加入上傳。
+- 以 `library_sync` 手動同步已開啟同步的項目；外掛每 180 秒嘗試同步。衝突先比較兩份完整內容，再以 `library_resolve` 選採用遠端／另存副本，傳入目前 bundleHash（`expectedHash`）／遠端 revision（`remoteRevision`），同步器另核對本地 localHash。不得強制覆寫或遺棄衝突稿。
 - 明確分享：選私人或團隊目的地，展示完整 SOP、檔案、依賴、流程與分享範圍後確認。舊本地內容可使用 `cloud_preview_publish`／`agent_commit`；原檔案不修改。團隊更新須當下 editor／owner 權限，私人同步不等於團隊共享。
 - 執行：切換到 `run-agent`。本地 Skill／Workflow 可用穩定本地 ID 交給 `agent_prepare_run`／`workflow_prepare_run`；已有雲端資產 ID 時可用 `cloud_prepare_run`。必須在目前宿主實際執行回傳的 `prepared.prompt`。
 - 雲端管理頁可檢視完整內容、下載／匯入 JSON、複製到自己或團隊空間，以及預覽舊版後新增回復版本。私人記憶、對話、執行資料與憑證不包含在共享套件。
+
+介面的「公用 Skills」顯示已安裝的 GitHub 技能與版本，可閱讀完整內容或取得目前宿主的使用提示。ERP 影片使用 `erp-video-automation`，配套為 `vixo-video-intake` 與 `expense-claim-helper`；不需另存成個人雲端資產。
 
 GitHub 管理插件原始碼與公用 Skill 發布；Supabase 管理已同步資產、權限及 revision，本地保存本人草稿、持久佇列與程式快取。換機只能取得已同步內容，不轉移外部登入、ERP 權限或模型權重。執行、續跑、排程須線上查核帳號核准及資產／membership；完全離線只保存草稿，不自行啟用離線執行。
 

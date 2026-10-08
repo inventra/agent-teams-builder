@@ -114,7 +114,7 @@ async function refresh() {
   for (const workspace of workspaces) option($('workspace'), workspace.id, workspace.name);
   resources(); $('assets').replaceChildren();
   for (const asset of assets) {
-    const item = document.createElement('li'); const button = document.createElement('button');
+    const item = document.createElement('li'); item.className = 'cloud-asset'; const button = document.createElement('button'); button.className = 'asset-open';
     button.textContent = `${asset.title} · ${asset.kind} · v${asset.revision}`;
     button.onclick = action(async () => {
       const result = await api('pull', { assetId: asset.id });
@@ -203,17 +203,17 @@ async function showAccounts() {
   if (!await ensureAdmin()) return;
   const accounts = await api('accounts');
   for (const [status, title] of [['pending', '待審核'], ['approved', '已核准'], ['disabled', '已停用']]) {
-    const group = document.createElement('section'); group.setAttribute('aria-label', title);
+    const group = document.createElement('section'); group.className = 'account-group'; group.dataset.status = status; group.setAttribute('aria-label', title);
     const heading = document.createElement('h3'); heading.textContent = title; group.append(heading);
     const rows = accounts.filter(row => row.status === status);
     if (!rows.length) { const empty = document.createElement('p'); empty.textContent = '目前沒有帳號。'; group.append(empty); }
     for (const row of rows) {
-      const item = document.createElement('div'); item.className = 'actions';
-      const label = document.createElement('p'); label.textContent = `${row.displayName || row.username || (row.isAdmin ? 'Kevin 管理員' : '尚未設定帳號')} · ${row.username || '既有裝置身分'}`; item.append(label);
-      if (row.isAdmin) { const tag = document.createElement('p'); tag.textContent = '管理員'; item.append(tag); }
+      const item = document.createElement('div'); item.className = 'actions account-row';
+      const label = document.createElement('p'); label.className = 'account-person'; label.textContent = `${row.displayName || row.username || (row.isAdmin ? 'Kevin 管理員' : '尚未設定帳號')} · ${row.username || '既有裝置身分'}`; item.append(label);
+      if (row.isAdmin) { const tag = document.createElement('p'); tag.className = 'admin-badge'; tag.textContent = '管理員'; item.append(tag); }
       else {
         for (const desired of status === 'pending' ? ['approved', 'disabled'] : [status === 'approved' ? 'disabled' : 'approved']) {
-          const button = document.createElement('button');
+          const button = document.createElement('button'); button.className = desired === 'disabled' ? 'quiet danger' : 'primary';
           button.textContent = desired === 'disabled' ? '停用' : status === 'pending' ? '核准' : '恢復';
           button.onclick = action(async () => { if (!await ensureAdmin()) return; await api('account-status', { userId: row.userId, status: desired }); broadcastConnectionChange(); await showAccounts(); notice(desired === 'approved' ? '帳號已核准，團隊權限需另外邀請。' : '帳號已停用。'); });
           item.append(button);

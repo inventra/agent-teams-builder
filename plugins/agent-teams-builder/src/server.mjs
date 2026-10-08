@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { commitPreview, createPreview, ensureAgentTeamsRoot, getAgent, listAgents, prepareRun, prepareWorkflowRun } from "./store.mjs";
-import { cloudStatus, cloudClient, cloudSync, listSourceAgents, getSourceAgent, prepareSourceRun, previewSourceAgent, commitSourcePreview, previewLocalPublish, libraryState, syncLibrary, previewLibraryEntry, resolveLibraryConflict, requireAccount, assertAccount } from './cloud-service.mjs';
+import { cloudStatus, cloudClient, cloudSync, listSourceAgents, getSourceAgent, prepareSourceRun, previewSourceAgent, commitSourcePreview, previewLocalPublish, libraryState, syncLibrary, previewLibraryEntry, resolveLibraryConflict, enableLibrarySync, requireAccount, assertAccount } from './cloud-service.mjs';
 
 const skillSchema = z.object({
   id: z.string(),
@@ -61,7 +61,7 @@ export function buildServer() {
   server.registerTool("agent_preview", {
     title: "Preview Agent creation or update",
     description: "Validate and preview a complete Agent definition. This does not create or modify the Agent. Show the preview to the user and ask for explicit confirmation before calling agent_commit.",
-    inputSchema: { action: z.enum(["create", "update"]), spec: agentSchema, cloudAssetId: z.string().optional(), expectedRevision: z.number().int().positive().optional(), workspaceId: z.string().nullable().optional() },
+    inputSchema: { action: z.enum(["create", "update"]), spec: agentSchema, cloudAssetId: z.string().optional(), expectedRevision: z.number().int().positive().optional(), workspaceId: z.string().nullable().optional(), syncMode: z.enum(["local-only", "cloud"]).optional() },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false }
   }, safe(previewSourceAgent));
   server.registerTool("agent_commit", {
@@ -112,8 +112,9 @@ export function buildServer() {
   server.registerTool('cloud_create_workspace', { title: 'Create a VIXO team space', description: 'Create a team sharing space owned by the currently connected identity.', inputSchema: { name: z.string() } }, safe(({ name }) => cloudClient().createWorkspace(name)));
   server.registerTool('cloud_create_invite', { title: 'Invite a coworker', description: 'Create a team invitation code. viewer can use/copy; editor can also publish shared versions. Return the code to the user; do not send messages to others.', inputSchema: { workspaceId: z.string(), role: z.enum(['viewer', 'editor']).default('viewer') } }, safe(({ workspaceId, role }) => cloudClient().createInvite(workspaceId, role)));
   server.registerTool('library_sync', { title: 'Synchronize the local VIXO library', description: 'After sign-in, compare cloud revisions and flush previously confirmed local changes. Conflicting or uncertain writes are preserved; this never silently overwrites them.', inputSchema: {}, annotations: { destructiveHint: false } }, safe(() => syncLibrary({ force: true })));
-  server.registerTool('library_preview', { title: 'Preview a local Agent, Skill or Workflow edit', description: 'Validate and display the entire portable bundle before saving. Obtain explicit confirmation of content and sharing scope before library_commit.', inputSchema: { id: z.string().optional(), bundle: z.record(z.string(), z.unknown()), title: z.string().optional(), description: z.string().optional(), workspaceId: z.string().nullable().optional() } }, safe(previewLibraryEntry));
-  server.registerTool('library_commit', { title: 'Save a confirmed local edit', description: 'Persist the confirmed preview locally, then queue background synchronization. Return queued status accurately; never claim queued content is already in the cloud.', inputSchema: { token: z.string(), userConfirmation: z.string() } }, safe(commitSourcePreview));
+  server.registerTool('library_preview', { title: 'Preview a local Agent, Skill or Workflow edit', description: 'Validate and display the entire portable bundle before saving. Obtain explicit confirmation of content and sharing scope before library_commit.', inputSchema: { id: z.string().optional(), bundle: z.record(z.string(), z.unknown()), title: z.string().optional(), description: z.string().optional(), workspaceId: z.string().nullable().optional(), syncMode: z.enum(["local-only", "cloud"]).optional() } }, safe(previewLibraryEntry));
+  server.registerTool('library_enable_sync', { title: 'Enable cloud synchronization for a local draft', description: 'Show the complete local bundle and private/team scope, then require explicit confirmation before enabling upload. Pass both current bundleHash and localHash to prevent stale approval.', inputSchema: { id: z.string(), expectedHash: z.string(), expectedLocalHash: z.string(), userConfirmation: z.string() } }, safe(enableLibrarySync));
+  server.registerTool('library_commit', { title: 'Save a confirmed local edit', description: 'Persist the confirmed preview locally. New items default to local-only; only explicitly enabled cloud items queue background synchronization. Report saved-local or queued accurately.', inputSchema: { token: z.string(), userConfirmation: z.string() } }, safe(commitSourcePreview));
   server.registerTool('library_resolve', { title: 'Resolve a reviewed synchronization conflict', description: 'After showing both versions and receiving explicit confirmation, keep the cloud version or save the local work as a separate copy. No force overwrite.', inputSchema: { id: z.string(), resolution: z.enum(['remote', 'copy']), userConfirmation: z.string(), expectedHash: z.string(), remoteRevision: z.number().int().positive().nullable().optional() } }, safe(resolveLibraryConflict));
   server.registerTool("dashboard_open", {
     title: "Open the VIXO Agents Dashboard",

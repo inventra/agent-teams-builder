@@ -6,7 +6,10 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { createDashboardServer } from "../plugins/agent-teams-builder/src/dashboard-server.mjs";
-import { createPreview, commitPreview } from "../plugins/agent-teams-builder/src/store.mjs";
+import { createPreview, commitPreview, getAgent } from "../plugins/agent-teams-builder/src/store.mjs";
+import { listPublicSkills } from "../plugins/agent-teams-builder/src/public-skills.mjs";
+import { workbenchState } from "../plugins/agent-teams-builder/src/workbench-store.mjs";
+import { M365SyncStore } from "../plugins/agent-teams-builder/src/m365-sync.mjs";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const require = createRequire(process.env.WORKBENCH_BROWSER_PACKAGE_ROOT ||
@@ -24,18 +27,37 @@ const preview = createPreview({ action: "create", spec: {
     nodes: [{ id: "icon-node", name: "檢查", type: "skill", skillId: "icon-skill", instructions: "只用於測試" }] }]
 } });
 commitPreview({ token: preview.token, userConfirmation: "確認" });
+const fixtureAgent = { ...getAgent("icon-fixture"), id: "legacy:icon-fixture", source: "local", syncMode: "local-only", syncState: "local", assetId: null };
+const fixtureSession = { connected: true, user: { id: "isolated-icon-user", username: "icon_fixture", accountConfigured: true }, access: { userId: "isolated-icon-user", status: "approved", isAdmin: false }, offline: false, source: "hybrid" };
+const fixtureState = { agents: [fixtureAgent], library: [{ id: fixtureAgent.id, kind: "agent", title: fixtureAgent.displayName, syncMode: "local-only", syncState: "local", assetId: null }], publicSkills: listPublicSkills(), sync: { pendingCount: 0, conflictCount: 0 }, hosts: { codex: true, claude: false }, codexProjects: [], runs: [], schedules: [], update: null };
+const fixtureM365 = new M365SyncStore(temporary);
+let preferences = {};
 const { server, token } = createDashboardServer({ token: "isolated-icon-test" });
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const base = "http://127.0.0.1:" + server.address().port;
 const browser = await chromium.launch({ headless: true, executablePath: process.env.WORKBENCH_CHROME_PATH ||
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" });
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
-const errors = [], external = [], checks = [];
+const errors = [], external = [], unexpectedApi = [], checks = [];
 page.on("pageerror", (error) => errors.push(error.message));
 await page.route("**/*", (route) => {
   const url = new URL(route.request().url());
-  if (["data:", "blob:"].includes(url.protocol) || url.origin === base) return route.continue();
-  external.push(url.origin); return route.abort();
+  if (["data:", "blob:"].includes(url.protocol)) return route.continue();
+  if (url.origin !== base) { external.push(url.origin); return route.abort(); }
+  // This visual fixture bypasses cloud authentication only in the browser's
+  // synthetic API. No real session, cloud request or business action is used.
+  const json = (body) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+  if (url.pathname === "/api/session") return json(fixtureSession);
+  if (url.pathname === "/api/state") return json(fixtureState);
+  if (url.pathname === "/api/sync") return json({ state: "idle" });
+  if (url.pathname === "/api/workbench") return json(workbenchState(temporary, { agents: [fixtureAgent], schedules: [], period: url.searchParams.get("period") || "today" }));
+  if (url.pathname === "/api/m365/status") return json(fixtureM365.status(fixtureSession.user.id));
+  if (url.pathname === "/api/preferences/workbench") {
+    if (route.request().method() === "POST") preferences = route.request().postDataJSON();
+    return json(preferences);
+  }
+  if (url.pathname.startsWith("/api/")) { unexpectedApi.push(url.pathname); return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Unexpected fixture API" }) }); }
+  return route.continue();
 });
 async function visibleIcons(selector, minimum) {
   const nodes = page.locator(selector);
@@ -52,6 +74,7 @@ async function visibleIcons(selector, minimum) {
 }
 try {
   await page.goto(base + "/?token=" + token);
+  await page.locator('[data-id="docs"]').click();
   await page.locator(".wb-core").waitFor();
   await visibleIcons("#agent-nav button", 9);
   await visibleIcons(".wb-card-icon", 9);
@@ -61,7 +84,9 @@ try {
   await visibleIcons(".wb-layout-row h4", 9);
   await visibleIcons('.wb-layout-row button,.wb-layout-row label,#wb-layout .wb-dialog-heading button,[data-wb="card-add"]', 59);
   assert.equal(await page.locator('[data-wb="card-up"]').first().isDisabled(), true);
-  await page.screenshot({ path: path.join(repo, "docs", "screenshots", "fixture-icons-layout.png") });
+  const output = path.join(repo, "output", "local-first-verification");
+  fs.mkdirSync(output, { recursive: true });
+  await page.screenshot({ path: path.join(output, "fixture-icons-layout.png") });
   await page.getByRole("button", { name: "關閉卡片配置", exact: true }).focus();
   await page.keyboard.press("Enter");
   assert.equal(await page.locator("#wb-layout").evaluate((node) => node.open), false);
@@ -88,6 +113,7 @@ try {
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "narrow viewport overflows");
   assert.deepEqual(errors, []);
   assert.deepEqual(external, [], "icons must work without external fonts or CDN");
+  assert.deepEqual(unexpectedApi, [], "every visual fixture API must be explicitly synthetic");
   checks.push("employee actions, 390px viewport and no external icon/font requests or JavaScript errors");
   console.log(JSON.stringify({ passed: checks.length, checks, fixtureOnly: true, desktopControlled: false }, null, 2));
 } finally {

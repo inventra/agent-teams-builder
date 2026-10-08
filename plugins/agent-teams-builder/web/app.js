@@ -1,7 +1,7 @@
 import { createWorkbench } from "./workbench.js";
 import { icon } from "./icons.js";
 import { navigateDashboard, notifyEmbedReady } from "./embed-navigation.mjs";
-import { dashboardSessionMode, SYNC_LABELS, visibleLibrary, validateAccountInput, draftBundleTemplate, libraryWithAgentChildren } from "./workbench-model.js";
+import { dashboardSessionMode, SYNC_LABELS, visibleLibrary, validateAccountInput, draftBundleTemplate, libraryWithAgentChildren, libraryLocation } from "./workbench-model.js";
 
 document.querySelectorAll("[data-ui-icon]").forEach((element) => {
   element.innerHTML = icon(element.dataset.uiIcon);
@@ -15,6 +15,7 @@ let state = null;
 let selected = "library";
 let session = null, generation = 0, loading = null, checking = null, libraryKind = "agent", dialogVersion = 0;
 let authMode = "login", authBusy = false, syncBusy = false, checkingGeneration = -1;
+let librarySource = "all";
 const $ = (selector) => document.querySelector(selector);
 const mode = () => dashboardSessionMode(session);
 const usable = () => ["approved", "offline"].includes(mode());
@@ -39,7 +40,7 @@ async function api(path, options={}) {
   const stamp = generation, identity = session?.user?.id;
   const authPath = path.startsWith("/api/session") || /^\/api\/cloud\/(login|register|setup-account|disconnect)$/.test(path);
   if (!authPath && !usable()) throw stale();
-  if (!authPath && !online() && !/^\/api\/(state|library(?:\/item|\/preview|\/commit)?)(?:\?|$)/.test(path)) throw new Error("離線時只能編輯此帳號的本機草稿。");
+  if (!authPath && !online() && !/^\/api\/(state|library(?:\/item|\/preview|\/commit)?|public-skills(?:\/item)?)(?:\?|$)/.test(path)) throw new Error("離線時只能編輯此帳號的本機草稿。");
   const response = await fetch(path, { ...options, headers: { ...headers, ...(options.headers||{}) } });
   const body = await response.json();
   if (stamp !== generation || identity !== session?.user?.id) throw stale();
@@ -54,7 +55,7 @@ async function api(path, options={}) {
 }
 const post = (path, body={}) => api(path,{method:"POST",body:JSON.stringify(body)});
 function clearPrivate() {
-  generation++; dialogVersion++; state=null; loading=null; selected="library";
+  generation++; dialogVersion++; state=null; loading=null; selected="library"; librarySource="all";
   document.querySelectorAll("dialog").forEach(dialog => {if(dialog.open) dialog.close();});
   document.querySelectorAll("#run-form,#schedule-form").forEach(form => form.reset());
   for (const id of ["agent-nav","content","summary","library-dialog-body","library-dialog-title","account-name","sync-status","page-title","page-subtitle","update-banner","host-status"]) $("#"+id).replaceChildren();
@@ -85,6 +86,7 @@ function bindCredentials(kind,id="auth-form") {
   });
 }
 function renderGate(message="") {
+  document.body.classList.add("library-mode");
   const gate=$("#session-gate");gate.hidden=false;$(".shell").hidden=true;
   const current=mode();gate.dataset.mode=message?"checking":current;
   if(message){gate.innerHTML=`<div class="gate-card"><div class="eyebrow">VIXO AGENT TEAMS</div><h1>${esc(message)}</h1><button id="retry-session" class="secondary">重新檢查</button></div>`;$("#retry-session").onclick=()=>checkSession(true);return;}
@@ -136,7 +138,8 @@ async function synchronize(manual=true) {
 
 function renderNav() {
   const nav=document.querySelector("#agent-nav");
-  nav.innerHTML=`<button class="nav-item ${selected==="library"?"active":""}" data-id="library"><div class="nav-heading">資料庫</div><span class="nav-description">本機與雲端 · Agent / Skill / Workflow</span></button>`+(online()?`<button class="nav-item ${selected==="all"?"active":""}" data-id="all"><div class="nav-heading">${icon("team")}員工總覽</div><span class="nav-description">${state.agents.length} 位員工</span></button>`+state.agents.map(agent=>`<button class="nav-item ${selected===agent.id?"active":""}" data-id="${esc(agent.id)}"><div class="nav-heading">${icon("user")}${esc(agent.displayName)}</div><span class="nav-description">${agent.skills.length} Skills · ${(agent.workflows||[]).length} Workflows</span></button>`).join(""):"");
+  nav.innerHTML=`<button class="nav-item ${selected==="library"?"active":""}" data-id="library"><div class="nav-heading">${icon("system")}資料庫</div><span class="nav-description">本機與雲端 · Agent / Skill / Workflow</span></button>`+(online()?`<button class="nav-item ${selected==="all"?"active":""}" data-id="all"><div class="nav-heading">${icon("team")}員工總覽</div><span class="nav-description">${state.agents.length} 位員工</span></button>`+state.agents.map(agent=>`<button class="nav-item ${selected===agent.id?"active":""}" data-id="${esc(agent.id)}"><div class="nav-heading">${icon("user")}${esc(agent.displayName)}</div><span class="nav-description">${agent.skills.length} Skills · ${(agent.workflows||[]).length} Workflows</span></button>`).join(""):"");
+  nav.insertAdjacentHTML("beforeend", `<button class="nav-item ${selected==="public-skills"?"active":""}" data-id="public-skills"><div class="nav-heading">${icon("functions")}公用 Skills</div><span class="nav-description">ERP 影片自動化與共用工具</span></button>`);
   const docsNav = selected === "docs" ? [
     ["skins", "L0　介面樣式"], ["home", "L1　首頁總覽"], ["office", "像素辦公室"],
     ["functions", "L2　功能層"], ["system", "L3　系統層"], ["runs", "執行中心"]
@@ -175,7 +178,7 @@ function workflowCard(agent, workflow) {
 }
 
 function employeeCard(agent) {
-  return `<article class="employee"><div class="employee-head"><div class="employee-title"><div class="avatar">${esc(agent.displayName.slice(0,1))}</div><div><h3>${esc(agent.displayName)}</h3><p>${esc(agent.description)}</p><span class="tag">${esc(agent.id)}</span><span class="tag">v${esc(agent.version)}</span></div></div></div><div class="employee-body"><div class="eyebrow">SKILLS</div><div class="skills">${agent.skills.map(skill=>`<span class="skill">${esc(skill.name)}</span>`).join("")}</div><div class="eyebrow">WORKFLOWS</div>${(agent.workflows||[]).length?(agent.workflows||[]).map(workflow=>workflowCard(agent,workflow)).join(""):'<p>尚未建立 Workflow。請在 Session 中說「替這位員工加上 Workflow」。</p>'}</div></article>`;
+  return `<article class="employee"><div class="employee-head"><div class="employee-title"><div class="avatar">${esc(agent.displayName.slice(0,1))}</div><div><h3>${esc(agent.displayName)}</h3><p>${esc(agent.description)}</p><span class="tag">${esc(agent.id)}</span><span class="tag">v${esc(agent.version)}</span><span class="tag">${libraryLocation(agent).storage} · 本機執行</span></div></div></div><div class="employee-body"><div class="eyebrow">SKILLS</div><div class="skills">${agent.skills.map(skill=>`<span class="skill">${esc(skill.name)}</span>`).join("")}</div><div class="eyebrow">WORKFLOWS</div>${(agent.workflows||[]).length?(agent.workflows||[]).map(workflow=>workflowCard(agent,workflow)).join(""):'<p>尚未建立 Workflow。請在 Session 中說「替這位員工加上 Workflow」。</p>'}</div></article>`;
 }
 
 function renderRuns() {
@@ -248,6 +251,8 @@ function render() {
   renderAccount();
   renderNav();
   renderUpdate();
+  document.body.classList.toggle("library-mode", selected!=="docs");
+  if(selected==="public-skills"){renderPublicSkills();return;}
   if(selected==="library" || !online()){renderLibrary();return;}
   const agents=selected==="all"?state.agents:state.agents.filter(agent=>agent.id===selected);
   const skillCount=state.agents.reduce((sum,agent)=>sum+agent.skills.length,0), workflowCount=state.agents.reduce((sum,agent)=>sum+(agent.workflows||[]).length,0), scheduled=state.schedules.filter(item=>item.enabled).length;
@@ -269,7 +274,7 @@ function render() {
 async function load(){
   if(!usable()||document.hidden)return;if(loading)return loading;
   const stamp=generation;
-  const task=(async()=>{try{const next=await api("/api/state");if(stamp!==generation)return;state={agents:[],hosts:{},codexProjects:[],runs:[],schedules:[],library:[],...next};render();if(workbench.active)await workbench.refresh(state);}catch(error){if(error.code!=="stale_operation"){toast(friendlyError(error));if(stamp===generation){clearPrivate();session=null;renderGate("正在重新確認連線…");void checkSession(true);}}}})();
+  const task=(async()=>{try{const next=await api("/api/state");if(stamp!==generation)return;state={agents:[],hosts:{},codexProjects:[],runs:[],schedules:[],library:[],publicSkills:[],...next};render();if(workbench.active)await workbench.refresh(state);}catch(error){if(error.code!=="stale_operation"){toast(friendlyError(error));if(stamp===generation){clearPrivate();session=null;renderGate("正在重新確認連線…");void checkSession(true);}}}})();
   loading=task;try{await task;}finally{if(loading===task)loading=null;}
 }
 document.querySelector("#refresh").onclick=load;
@@ -296,18 +301,47 @@ $("#account-button").onclick=()=>{
   if($("#legacy-import"))$("#legacy-import").onclick=()=>{showDialog("匯入舊版本機 Agent",`<p>將此裝置 ${esc(session.legacyCount||0)} 個舊版 Agent 加入目前帳號。匯入後只屬於這個帳號，不會自動與同仁分享。</p><label class="confirmation"><input id="confirm-import" type="checkbox">我確認匯入至目前帳號</label><button id="commit-import" class="primary" disabled>確認匯入</button>`);$("#confirm-import").onchange=event=>$("#commit-import").disabled=!event.target.checked;$("#commit-import").onclick=()=>dialogAction(async()=>{await post("/api/library/import-legacy",{userConfirmation:"確認"});closeDialog();await checkSession(true);});};
 };
 
+function executionContext() {
+  return `<section class="execution-context" aria-label="執行與保存位置"><div class="context-symbol">${icon("functions")}</div><div><strong>在這台電腦執行</strong><p>Codex／Claude 使用本機內容工作。雲端保存、同步與分享你選擇的項目。</p></div><span class="connection-pill ${online()?"connected":"offline"}">${online()?"雲端已連線":"雲端離線"}</span></section>`;
+}
+function publicSkillCards() {
+  return `<div class="library-grid public-skill-grid">${(state.publicSkills||[]).map(row=>`<article class="library-card public-skill-card"><div class="library-badges"><span class="tag">GitHub 公用套件</span><span class="tag ${row.availability==="installed"?"sync-synced":"sync-error"}">${row.availability==="installed"?"本機已安裝":"待安裝"}</span></div><h2>${esc(row.title)}</h2><p>${esc(row.description)}</p><small>${esc(row.slug)} · v${esc(row.version)}</small><button class="secondary open-public-skill" data-slug="${esc(row.slug)}" ${row.availability!=="installed"?"disabled":""}>查看技能與使用方式</button></article>`).join("")||'<p>目前套件沒有可用的公用 Skill，請檢查外掛更新。</p>'}</div>`;
+}
+function bindPublicSkills() {
+  document.querySelectorAll('.open-public-skill').forEach(button=>button.onclick=()=>openPublicSkill(button.dataset.slug));
+}
+function renderPublicSkills() {
+  workbench.close();$("main>header").hidden=false;$("#summary").hidden=true;$("#content").hidden=false;
+  $("#page-title").textContent="公用 Skills";
+  $("#page-subtitle").textContent="團隊共同維護，隨 VIXO 外掛安裝到這台電腦。";
+  $("#content").innerHTML=executionContext()+`<section class="public-intro"><div class="eyebrow">SHARED BY VIXO</div><h2>把共同經驗，變成每個人的能力。</h2><p>ERP 影片自動化與配套技能來自 VIXO GitHub 共用套件。更新外掛時取得新版，使用時讀取本機檔案。</p></section>`+publicSkillCards();
+  bindActions();bindPublicSkills();
+}
+async function openPublicSkill(slug) {
+  const stamp=showDialog("正在讀取公用 Skill…","<p>讀取本機已安裝的技能內容。</p>");
+  await dialogAction(async()=>{
+    const detail=await api('/api/public-skills/item?slug='+encodeURIComponent(slug));if(stamp!==dialogVersion)return;
+    showDialog(detail.title,`<div class="library-badges"><span class="tag">GitHub 公用套件</span><span class="tag sync-synced">本機已安裝 · v${esc(detail.version)}</span></div><p>${esc(detail.description)}</p><p>來源：VIXO GitHub · ${esc(detail.slug)}<br>在本機執行，不需要先上傳到你的個人雲端資料庫。</p>${online()?'<button id="prepare-public-skill" class="primary">取得使用提示</button>':'<p>重新連線確認帳號權限後，即可取得使用提示。</p>'}<details class="skill-content"><summary>閱讀完整 Skill</summary><pre class="bundle-preview">${esc(detail.markdown)}</pre></details>${detail.references?.length?`<details class="skill-content"><summary>配套參考文件（${detail.references.length}）</summary><div class="reference-list">${detail.references.map(ref=>`<button class="secondary read-public-reference" data-path="${esc(ref.path)}">${esc(ref.title)}</button>`).join("")}</div><pre id="public-reference" class="bundle-preview" hidden></pre></details>`:""}`);
+    if($("#prepare-public-skill"))$("#prepare-public-skill").onclick=()=>dialogAction(async()=>{
+      const version=dialogVersion;const result=await post('/api/public-skills/prepare',{slug});if(version!==dialogVersion)return;showDialog("在目前 Session 使用公用 Skill",`<p>將以下提示交給目前 Codex／Claude Session，並附上影片或本次任務說明。實際操作依你的授權執行。</p><textarea id="public-usage-prompt" class="code-editor" rows="14" readonly aria-label="公用 Skill 使用提示">${esc(result.prompt)}</textarea><button id="select-public-prompt" class="secondary">選取完整提示</button>`);$("#select-public-prompt").onclick=()=>{$("#public-usage-prompt").focus();$("#public-usage-prompt").select();};
+    });
+    document.querySelectorAll('.read-public-reference').forEach(button=>button.onclick=()=>dialogAction(async()=>{const version=dialogVersion;const result=await api('/api/public-skills/item?slug='+encodeURIComponent(slug)+'&reference='+encodeURIComponent(button.dataset.path));if(version!==dialogVersion)return;$("#public-reference").hidden=false;$("#public-reference").textContent=result.markdown;}));
+  });
+}
 function renderLibrary() {
   workbench.close();
   $("main>header").hidden=false;$("#summary").hidden=false;$("#content").hidden=false;
   $("#page-title").textContent="我的資料庫";
-  $("#page-subtitle").textContent=online()?"本機與雲端的 Agent、Skill、Workflow。修改先存本機，再同步到同一個帳號。":"離線草稿模式：可以預覽與儲存本機修改，重新連線後才能同步或執行。";
-  const entries=visibleLibrary(libraryWithAgentChildren(state.library,state.agents),session), rows=entries.filter(row=>row.kind===libraryKind);
-  $("#summary").innerHTML=[...['agent','skill','workflow'].map(kind=>[entries.filter(row=>row.kind===kind).length,{agent:"Agents",skill:"Skills",workflow:"Workflows"}[kind]]),[entries.filter(row=>row.syncState==="pending").length,"待同步"]].map(([n,label])=>`<div class="metric"><b>${n}</b><span>${label}</span></div>`).join("");
-  $("#content").innerHTML=`<div class="library-toolbar"><div class="library-tabs" role="tablist" aria-label="資料類型">${['agent','skill','workflow'].map(kind=>`<button role="tab" aria-selected="${kind===libraryKind}" data-library-kind="${kind}">${{agent:"Agent",skill:"Skill",workflow:"Workflow"}[kind]}</button>`).join("")}</div><button id="new-draft" class="primary">新增本機草稿</button></div><div class="library-grid">${rows.map(row=>`<article class="library-card"><div class="library-badges"><span class="tag">${row.id.startsWith("cloud:")?"雲端":row.id.startsWith("legacy:")?"原有本機":"本機"}${row.workspaceId?" · 團隊":" · 個人"}</span><span class="tag sync-${esc(row.syncState)}">${esc(SYNC_LABELS[row.syncState]||row.syncState||"僅在本機")}</span></div><h2>${esc(row.title||row.slug)}</h2><p>${esc(row.description||"尚無說明")}</p><small>${row.parentId?"隸屬 "+esc(row.parentTitle)+" · ":""}${esc(row.slug)}${row.revision?" · v"+esc(row.revision):""}</small><button class="secondary open-library-item" data-id="${esc(row.parentId||row.id)}">${row.parentId?"查看所屬 Agent":["conflict","uncertain","error"].includes(row.syncState)?"檢視版本衝突":"查看完整內容"}</button></article>`).join("")||'<div class="empty"><h2>尚無這類資料</h2><p>可以建立本機草稿，或同步已有的雲端資料。</p></div>'}</div>`;
-  $("#host-status").textContent=online()?([state.hosts.codex&&"Codex",state.hosts.claude&&"Claude Code"].filter(Boolean).join(" + ")||"未連結執行宿主"):"離線草稿模式";
-  $("#check-update").disabled=!online();bindActions();
+  $("#page-subtitle").textContent=online()?"先在本機完成工作，需要跨裝置或分享時，再開啟雲端同步。":"離線草稿模式：可以預覽與儲存本機修改，重新連線後才能同步或執行。";
+  const entries=visibleLibrary(libraryWithAgentChildren(state.library,state.agents),session);
+  const rows=entries.filter(row=>row.kind===libraryKind&&(librarySource==="all"||(librarySource==="cloud")===libraryLocation(row).cloudLinked));
+  $("#summary").innerHTML=[...['agent','skill','workflow'].map(kind=>[entries.filter(row=>row.kind===kind).length,{agent:"Agents",skill:"Skills",workflow:"Workflows"}[kind]]),[state.sync?.pendingCount||0,"待同步項目"]].map(([n,label])=>`<div class="metric"><b>${n}</b><span>${label}</span></div>`).join("");
+  $("#content").innerHTML=executionContext()+`<div class="library-toolbar"><div class="library-tabs" role="tablist" aria-label="資料類型">${['agent','skill','workflow'].map(kind=>`<button role="tab" aria-selected="${kind===libraryKind}" data-library-kind="${kind}">${{agent:"Agent",skill:"Skill",workflow:"Workflow"}[kind]}</button>`).join("")}</div><div class="library-tools"><select id="library-source" aria-label="保存位置"><option value="all">全部保存位置</option><option value="local">僅存本機</option><option value="cloud">本機＋雲端</option></select><button id="new-draft" class="primary">新增本機草稿</button></div></div><div class="library-grid">${rows.map(row=>{const location=libraryLocation(row);return `<article class="library-card"><div class="library-badges"><span class="tag storage-badge">${location.storage}</span><span class="tag sync-${esc(row.syncState)}">${esc(SYNC_LABELS[row.syncState]||"僅在本機")}</span></div><h2>${esc(row.title||row.slug)}</h2><p>${esc(row.description||"尚無說明")}</p><small>${location.scope} · 本機執行<br>${row.parentId?"隸屬 "+esc(row.parentTitle)+" · ":""}${esc(row.slug)}${row.revision?" · v"+esc(row.revision):""}</small><button class="secondary open-library-item" data-id="${esc(row.parentId||row.id)}">${row.parentId?"查看所屬 Agent":["conflict","uncertain","error"].includes(row.syncState)?"檢視版本衝突":"查看完整內容"}</button></article>`;}).join("")||'<div class="empty"><h2>尚無這類資料</h2><p>建立本機草稿，或切換保存位置查看其他內容。</p></div>'}</div>${libraryKind==="skill"?'<section class="public-section"><div class="section-heading"><div><div class="eyebrow">SHARED BY VIXO</div><h2>公用 Skills</h2><p>GitHub 共用套件 · 安裝後在本機使用</p></div></div>'+publicSkillCards()+'</section>':""}`;
+  $("#host-status").textContent=online()?"本機執行 · "+([state.hosts.codex&&"Codex",state.hosts.claude&&"Claude Code"].filter(Boolean).join(" + ")||"未連結宿主"):"離線草稿模式";
+  $("#check-update").disabled=!online();bindActions();bindPublicSkills();
   document.querySelectorAll("[data-library-kind]").forEach(button=>button.onclick=()=>{libraryKind=button.dataset.libraryKind;renderLibrary();});
   document.querySelectorAll(".open-library-item").forEach(button=>button.onclick=()=>openLibraryItem(button.dataset.id));
+  $("#library-source").value=librarySource;$("#library-source").onchange=event=>{librarySource=event.target.value;renderLibrary();};
   $("#new-draft").onclick=()=>openDraftEditor();
 }
 function showDialog(title,html) {
@@ -335,30 +369,37 @@ async function openLibraryItem(id) {
       return;
     }
     const needsResolution=["conflict","uncertain","error"].includes(entry.syncState);
-    showDialog(entry.title||entry.slug,`<p>${esc(entry.description)}</p><p>${esc(SYNC_LABELS[entry.syncState]||"本機副本")} · ${esc(entry.kind)}${entry.revision?" · v"+esc(entry.revision):""}</p>${needsResolution?`<p class="conflict-note">${entry.syncState==="uncertain"?"同步結果尚未確認，請先重試同步；原先的雲端寫入可能已完成，另存副本可能保留兩份。":"此版本尚未同步成功。請檢查本機與可取得的雲端內容，選擇保留方式。"}</p><div class="conflict-columns"><section><h3>目前本機</h3>${bundleView(entry.bundle)}</section><section><h3>雲端候選 v${esc(remote?.revision||"未知")}</h3>${remote?bundleView(remote.bundle):"<p>無法取得雲端候選，請重新同步。</p>"}</section></div><label class="confirmation"><input id="confirm-conflict" type="checkbox">我已檢查目前可取得的版本並確認以下處理</label><div class="actions"><button id="resolve-remote" class="secondary" disabled>採用雲端版本</button><button id="resolve-copy" class="primary" disabled>將本機版本另存副本</button></div>`:`${bundleView(entry.bundle)}<div class="actions"><button id="edit-draft" class="primary">編輯本機草稿</button>${online()?'<button id="prepare-library" class="secondary">取得執行提示</button>':""}</div>`}`);
+    showDialog(entry.title||entry.slug,`<p>${esc(entry.description)}</p><p>${libraryLocation(entry).storage} · 本機執行 · ${esc(SYNC_LABELS[entry.syncState]||"本機副本")} · ${esc(entry.kind)}${entry.revision?" · v"+esc(entry.revision):""}</p>${needsResolution?`<p class="conflict-note">${entry.syncState==="uncertain"?"同步結果尚未確認，請先重試同步；原先的雲端寫入可能已完成，另存副本可能保留兩份。":"此版本尚未同步成功。請檢查本機與可取得的雲端內容，選擇保留方式。"}</p><div class="conflict-columns"><section><h3>目前本機</h3>${bundleView(entry.bundle)}</section><section><h3>雲端候選 v${esc(remote?.revision||"未知")}</h3>${remote?bundleView(remote.bundle):"<p>無法取得雲端候選，請重新同步。</p>"}</section></div><label class="confirmation"><input id="confirm-conflict" type="checkbox">我已檢查目前可取得的版本並確認以下處理</label><div class="actions"><button id="resolve-remote" class="secondary" disabled>採用雲端版本</button><button id="resolve-copy" class="primary" disabled>將本機版本另存副本</button></div>`:`${bundleView(entry.bundle)}<div class="actions"><button id="edit-draft" class="primary">編輯本機草稿</button>${online()?'<button id="prepare-library" class="secondary">取得執行提示</button>':""}${online()&&entry.id.startsWith("local:")&&entry.syncMode==="local-only"?'<button id="enable-library-sync" class="secondary">開啟雲端同步</button>':""}</div>`}`);
+    if($("#enable-library-sync"))$("#enable-library-sync").onclick=()=>{
+      showDialog("確認開啟雲端同步",`<h3>${esc(entry.title)}</h3><p>將以下完整內容上傳至${entry.workspaceId?"指定團隊空間":"你的個人空間"}，之後此項目的確認修改也會同步。實際執行仍在本機。</p>${bundleView(entry.bundle)}<label class="confirmation"><input id="confirm-enable-sync" type="checkbox">我已確認內容與分享範圍，同意開啟同步</label><button id="commit-enable-sync" class="primary" disabled>確認開啟同步</button>`);
+      $("#confirm-enable-sync").onchange=event=>$("#commit-enable-sync").disabled=!event.target.checked;
+      $("#commit-enable-sync").onclick=()=>dialogAction(async()=>{if(!$("#confirm-enable-sync").checked)return;const version=dialogVersion;await post('/api/library/enable-sync',{id:entry.id,expectedHash:entry.bundleHash,expectedLocalHash:entry.localHash,userConfirmation:"確認"});if(version!==dialogVersion){await load();return;}closeDialog();toast("已開啟同步，完成後會顯示雲端副本");await load();});
+    };
     if($("#edit-draft"))$("#edit-draft").onclick=()=>openDraftEditor(entry);
-    if($("#prepare-library"))$("#prepare-library").onclick=()=>dialogAction(async()=>{const result=await post("/api/library/prepare",{id:entry.id});showDialog("在目前的 Codex Session 執行",`<p>請將完整提示交給目前 Codex Session 執行。外部系統授權需在這台裝置確認。</p><pre class="bundle-preview">${esc(result.prepared?.prompt||result.prompt||JSON.stringify(result,null,2))}</pre>`);});
+    if($("#prepare-library"))$("#prepare-library").onclick=()=>dialogAction(async()=>{const version=dialogVersion;const result=await post("/api/library/prepare",{id:entry.id});if(version!==dialogVersion)return;showDialog("在目前的 Codex Session 執行",`<p>請將完整提示交給目前 Codex Session 執行。外部系統授權需在這台裝置確認。</p><pre class="bundle-preview">${esc(result.prepared?.prompt||result.prompt||JSON.stringify(result,null,2))}</pre>`);});
     if($("#confirm-conflict")) {
       $("#confirm-conflict").onchange=event=>{for(const name of ['remote','copy'])$("#resolve-"+name).disabled=!event.target.checked||!online()||(name==='remote'&&!remote);};
-      for(const resolution of ['remote','copy'])$("#resolve-"+resolution).onclick=()=>dialogAction(async()=>{if(!$("#confirm-conflict").checked)return;await post("/api/library/resolve",{id:entry.id,resolution,userConfirmation:"確認",expectedHash:entry.bundleHash,expectedRevision:entry.revision,remoteRevision:remote?.revision??null});closeDialog();toast("版本處理已儲存，請查看同步狀態");await load();});
+      for(const resolution of ['remote','copy'])$("#resolve-"+resolution).onclick=()=>dialogAction(async()=>{if(!$("#confirm-conflict").checked)return;const version=dialogVersion;await post("/api/library/resolve",{id:entry.id,resolution,userConfirmation:"確認",expectedHash:entry.bundleHash,expectedRevision:entry.revision,remoteRevision:remote?.revision??null});if(version!==dialogVersion){await load();return;}closeDialog();toast("版本處理已儲存，請查看同步狀態");await load();});
     }
   });
 }
 function openDraftEditor(entry=null, saved=null) {
   if(entry&&!entry.bundle)return toast("這份本機內容目前僅供檢視，請整理成完整套件後再編輯同步。");
   const bundle=saved?.bundle||entry?.bundle||draftBundleTemplate(libraryKind);
-  showDialog(entry?"編輯本機草稿":"新增本機草稿",`<p>編輯完整 JSON bundle，先預覽再確認儲存。檔案以文字內容保存，不包含密碼、Token 或私人記憶。</p><form id="draft-form"><label>名稱<input name="title" value="${esc(saved?.title||entry?.title||"")}" required maxlength="200"></label><label>識別名稱<input name="slug" value="${esc(saved?.slug||entry?.slug||bundle.spec?.id||"")}" required></label><label>說明<textarea name="description" rows="2">${esc(saved?.description||entry?.description||"")}</textarea></label><label>完整 Bundle JSON<textarea id="draft-json" name="bundle" class="code-editor" spellcheck="false" rows="18" required>${esc(JSON.stringify(bundle,null,2))}</textarea></label><p class="form-error" role="alert"></p><button class="primary" type="submit">預覽完整內容</button></form>`);
+  const syncMode=saved?.syncMode||entry?.syncMode||(entry?"cloud":"local-only"), locked=entry&&syncMode==="cloud";
+  showDialog(entry?"編輯本機草稿":"新增本機草稿",`<p>編輯完整 JSON bundle，先預覽再確認儲存。檔案以文字內容保存，不包含密碼、Token 或私人記憶。</p><form id="draft-form"><label>名稱<input name="title" value="${esc(saved?.title||entry?.title||"")}" required maxlength="200"></label><label>識別名稱<input name="slug" value="${esc(saved?.slug||entry?.slug||bundle.spec?.id||"")}" required></label><label>說明<textarea name="description" rows="2">${esc(saved?.description||entry?.description||"")}</textarea></label><label>保存方式<select name="syncMode" ${locked?"disabled":""}><option value="local-only" ${syncMode==="local-only"?"selected":""}>僅存本機 · 不上傳</option><option value="cloud" ${syncMode==="cloud"?"selected":""}>本機＋雲端同步</option></select></label><p class="form-note">${locked?"此項目已開啟同步，確認儲存後會更新原本的雲端空間。":"僅存本機的草稿不會被『立即同步』上傳。可稍後再開啟同步。"}</p><label>完整 Bundle JSON<textarea id="draft-json" name="bundle" class="code-editor" spellcheck="false" rows="18" required>${esc(JSON.stringify(bundle,null,2))}</textarea></label><p class="form-error" role="alert"></p><button class="primary" type="submit">預覽完整內容</button></form>`);
   $("#draft-form").onsubmit=async event=>{
     event.preventDefault();const form=event.currentTarget;let values=Object.fromEntries(new FormData(form));
+    if(locked)values.syncMode="cloud";
     try{values.bundle=JSON.parse(values.bundle);}catch{form.querySelector(".form-error").textContent="JSON 格式有誤，請檢查括號、逗號與引號。";return;}
     const stamp=dialogVersion;
     await dialogAction(async()=>{
       const preview=await post("/api/library/preview",{...values,kind:values.bundle.kind,...(entry?.id?{id:entry.id}:{})});if(stamp!==dialogVersion)return;
       const row=preview.entry;
-      showDialog("確認完整草稿",`<h3>${esc(row.title)}</h3><p>${esc(row.description)}</p><p>${esc(row.kind)} · ${esc(row.slug)}</p>${bundleView(row.bundle)}<label class="confirmation"><input id="confirm-draft" type="checkbox">我已閱讀完整 SOP、檔案、需求與確認點，確認儲存此版本</label><div class="actions"><button id="back-to-editor" class="secondary">返回修改</button><button id="commit-draft" class="primary" disabled>確認儲存到本機</button></div>`);
+      showDialog("確認完整草稿",`<h3>${esc(row.title)}</h3><p>${esc(row.description)}</p><p>${esc(row.kind)} · ${esc(row.slug)}</p><p class="save-scope">${row.syncMode==="local-only"?"保存方式：僅存本機，不上傳雲端。":"保存方式：本機儲存後，同步到"+(row.workspaceId?"指定團隊空間。":"你的個人雲端空間。")}</p>${bundleView(row.bundle)}<label class="confirmation"><input id="confirm-draft" type="checkbox">我已閱讀完整 SOP、檔案、需求與確認點，確認儲存此版本</label><div class="actions"><button id="back-to-editor" class="secondary">返回修改</button><button id="commit-draft" class="primary" disabled>確認儲存到本機</button></div>`);
       $("#back-to-editor").onclick=()=>openDraftEditor(entry,values);
       $("#confirm-draft").onchange=event=>$("#commit-draft").disabled=!event.target.checked;
-      $("#commit-draft").onclick=()=>dialogAction(async()=>{if(!$("#confirm-draft").checked)return;await post("/api/library/commit",{token:preview.token,userConfirmation:"確認"});closeDialog();toast("已儲存在本機，等待同步");await load();if(online())void synchronize(false);});
+      $("#commit-draft").onclick=()=>dialogAction(async()=>{if(!$("#confirm-draft").checked)return;const version=dialogVersion;await post("/api/library/commit",{token:preview.token,userConfirmation:"確認"});if(version!==dialogVersion){await load();return;}closeDialog();toast(row.syncMode==="local-only"?"已儲存，僅存本機":"已儲存在本機，等待同步");await load();if(online()&&row.syncMode!=="local-only")void synchronize(false);});
     });
   };
 }

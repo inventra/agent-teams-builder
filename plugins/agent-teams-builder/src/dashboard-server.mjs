@@ -9,7 +9,8 @@ import { fileURLToPath } from "node:url";
 import { agentTeamsRoot, ensureAgentTeamsRoot, getAgent, listAgents, prepareWorkflowRun } from "./store.mjs";
 import { checkForUpdate, readUpdateOperation, startUpdate } from "./update-service.mjs";
 import { getWorkbenchRun, readWorkbenchPreferences, saveWorkbenchPreferences, workbenchState } from "./workbench-store.mjs";
-import { cloudStatus, cloudClient, cloudSync, cloudConnected, cloudPortalUrl, listSourceAgents, prepareSourceRun, previewLocalPublish, commitSourcePreview, requireAccount, assertAccount, ownsLegacy, invalidateAccountView, libraryState, libraryItem, syncLibrary, previewLibraryEntry, resolveLibraryConflict, importLegacy, listLocalAgents } from './cloud-service.mjs';
+import { cloudStatus, cloudClient, cloudSync, cloudConnected, cloudPortalUrl, listSourceAgents, prepareSourceRun, previewLocalPublish, commitSourcePreview, requireAccount, assertAccount, ownsLegacy, invalidateAccountView, libraryState, libraryItem, syncLibrary, previewLibraryEntry, resolveLibraryConflict, enableLibrarySync, importLegacy, listLocalAgents } from './cloud-service.mjs';
+import { listPublicSkills, getPublicSkill, readPublicSkillReference, preparePublicSkill } from "./public-skills.mjs";
 import { renderSharedVideoPolicy } from "./shared-video-policy.mjs";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -463,6 +464,7 @@ async function dashboardState(update = null) {
   return {
     library: library.entries.map(({ bundle, agent, ...entry }) => entry),
     sync: library.sync,
+    publicSkills: listPublicSkills(),
     product: "VIXO Agents",
     cloud: state,
     root: ensureAgentTeamsRoot(),
@@ -595,6 +597,19 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
         if (request.method === 'GET' && url.pathname === '/api/session') return send(response, 200, await cloudStatus({ force: url.searchParams.get('force') === '1' }));
         if (request.method === 'GET' && url.pathname === '/api/library') return send(response, 200, await libraryState());
         if (request.method === 'GET' && url.pathname === '/api/library/item') return send(response, 200, await libraryItem(url.searchParams.get('id')));
+        if (request.method === 'GET' && ['/api/public-skills','/api/public-skills/item'].includes(url.pathname)) {
+          const account = await requireAccount({ allowOffline: true });
+          const slug = url.searchParams.get('slug'), reference = url.searchParams.get('reference');
+          const result = url.pathname === '/api/public-skills' ? listPublicSkills() : reference ? readPublicSkillReference(slug, reference) : getPublicSkill(slug);
+          assertAccount(account.user.id); return send(response, 200, result);
+        }
+        if (request.method === 'POST' && url.pathname === '/api/public-skills/prepare') {
+          const account = await requireAccount({ force: true });
+          const input = await bodyJson(request);
+          const result = preparePublicSkill({ slug: input.slug, task: input.task });
+          assertAccount(account.user.id); return send(response, 200, result);
+        }
+        if (request.method === 'POST' && url.pathname === '/api/library/enable-sync') return send(response, 200, await enableLibrarySync(await bodyJson(request)));
         if (request.method === 'POST' && url.pathname === '/api/sync') {
           const input = await bodyJson(request); return send(response, 200, await syncLibrary({ force: input.force === true }));
         }

@@ -109,7 +109,7 @@ function legacyEntries(state) {
     try {
       const agent = getAgent(id); let bundle = null, error = null;
       try { bundle = exportAgentBundle({ agent, agentDirectory: path.join(agentTeamsRoot(), id) }); } catch { error = '這份本機內容尚未符合雲端套件格式，可在本機使用；請整理後再同步。'; }
-      return [{ id: `legacy:${id}`, kind: 'agent', slug: id, title: agent.displayName, description: agent.description, revision: agent.version, workspaceId: null, ownerId: state.user.id, bundle, bundleHash: bundle ? bundleHash(bundle) : null, syncState: 'local', legacy: true, ...(error ? { error, agent } : {}) }];
+      return [{ id: `legacy:${id}`, assetId: null, hasCloudCopy: false, syncMode: 'local-only', kind: 'agent', slug: id, title: agent.displayName, description: agent.description, revision: agent.version, workspaceId: null, ownerId: state.user.id, bundle, bundleHash: bundle ? bundleHash(bundle) : null, syncState: 'local', legacy: true, ...(error ? { error, agent } : {}) }];
     } catch (error) { if (String(error.message).startsWith('Agent not found:')) return []; throw error; }
   });
 }
@@ -151,7 +151,7 @@ async function entryFor(reference, options) {
 }
 function agentFrom(entry) {
   if (entry.kind !== 'agent') throw fault('這個項目不是 Agent');
-  return { ...(entry.bundle?.spec || entry.agent), id: entry.id, version: entry.revision || entry.bundle?.spec.version, syncState: entry.syncState, source: entry.legacy ? 'local' : entry.id.startsWith('cloud:') ? 'cloud' : 'local',
+  return { ...(entry.bundle?.spec || entry.agent), id: entry.id, version: entry.revision || entry.bundle?.spec.version, syncState: entry.syncState, syncMode: entry.syncMode, assetId: entry.assetId || null, hasCloudCopy: Boolean(entry.assetId), source: entry.legacy ? 'local' : entry.id.startsWith('cloud:') ? 'cloud' : 'local',
     ...(entry.assetId || entry.id.startsWith('cloud:') ? { cloud: { assetId: entry.assetId || entry.id.slice(6), revision: entry.revision, workspaceId: entry.workspaceId, slug: entry.slug } } : {}) };
 }
 export async function getSourceAgent(reference) { return agentFrom(await entryFor(reference)); }
@@ -180,7 +180,7 @@ export async function prepareSourceRun(input, workflow = false) {
   const prepared = await cloudSync().prepareLocalBundleRun({ bundle: entry.bundle, localId: entry.id, baseAssetId: entry.assetId || undefined, task: input.task || '執行這個 Workflow', skill: input.skill, workflow: input.workflow, approvalMode: input.approvalMode || 'manual' });
   assertAccount(state.user.id);
   if (prepared.local.userId !== state.user.id) throw fault('帳號已變更。', 'account_changed', 401);
-  return prepared;
+  return { ...prepared, local: { ...prepared.local, syncMode: entry.syncMode, hasCloudCopy: Boolean(entry.assetId) } };
 }
 async function saveDraft(payload, state) {
   assertAccount(state.user.id);
@@ -188,7 +188,7 @@ async function saveDraft(payload, state) {
   const draft = { ...payload, userId: state.user.id, expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString() };
   validateCloudBundle(draft.bundle);
   write(path.join(cloudRoot(), 'previews', `${token}.json`), draft);
-  return { token, expiresAt: draft.expiresAt, source: 'local', ...payload, spec: payload.bundle.spec, entry: { ...payload, syncState: 'local' } };
+  return { token, expiresAt: draft.expiresAt, source: 'local', ...payload, spec: payload.bundle.spec, entry: { ...payload, assetId: payload.id || null, hasCloudCopy: Boolean(payload.id), syncState: payload.syncMode === 'local-only' ? 'local-only' : 'pending' } };
 }
 export async function previewLibraryEntry(input) {
   const state = await requireAccount({ force: true, allowOffline: true });
@@ -201,18 +201,21 @@ export async function previewLibraryEntry(input) {
   const remoteId = previous?.assetId || (previous?.id.startsWith('cloud:') ? previous.id.slice(6) : null);
   const workspaceId = previous ? previous.workspaceId : input.workspaceId || null;
   if (workspaceId && state.offline) throw fault('團隊分享需要連線。', 'network_error', 503);
+  const syncMode = input.syncMode ?? previous?.syncMode ?? (remoteId || workspaceId ? 'cloud' : 'local-only');
+  if (!['local-only', 'cloud'].includes(syncMode)) throw fault('未知同步模式。');
+  if (syncMode === 'local-only' && (remoteId || workspaceId)) throw fault('已有雲端版本或團隊範圍，請另存本機副本。', 'sync_mode_locked', 409);
   return saveDraft({ action: previous ? 'update' : 'create', id: remoteId, localId: previous?.id.startsWith('local:') ? previous.id : undefined, kind: bundle.kind,
     slug: previous?.slug || input.slug || bundle.spec.id, title: input.title || bundle.spec.displayName || bundle.spec.name, description: input.description ?? previous?.description ?? '', bundle, workspaceId,
-    expectedRevision: input.expectedRevision ?? (remoteId ? previous.revision : 0), expectedHash: previous?.bundleHash, expectedLocalHash: previous?.localHash, originalId: previous?.id, message: 'Confirmed local update' }, state);
+    expectedRevision: input.expectedRevision ?? (remoteId ? previous.revision : 0), expectedHash: previous?.bundleHash, expectedLocalHash: previous?.localHash, originalId: previous?.id, syncMode, message: 'Confirmed local update' }, state);
 }
-export async function previewSourceAgent({ action, spec, cloudAssetId, expectedRevision, workspaceId = null }) {
+export async function previewSourceAgent({ action, spec, cloudAssetId, expectedRevision, workspaceId = null, syncMode }) {
   const state = await requireAccount({ force: true, allowOffline: true });
   if (action === 'create' && (await libraryState()).entries.some(e => e.kind === 'agent' && e.slug === spec.id)) throw fault('Agent 已存在，請使用更新。', 'already_exists', 409);
   const previous = action === 'update' ? await entryFor(cloudAssetId ? `cloud:${cloudAssetId}` : spec.id, { expectedUserId: state.user.id }) : null;
   if (previous?.legacy && !previous.bundle) throw fault('請先整理本機內容的可攜格式，再建立同步草稿。');
   const clean = normalizeSpec({ ...spec, id: previous?.slug || spec.id }, previous?.bundle?.spec || null);
   const bundle = exportSpecBundle({ kind: 'agent', spec: { ...clean, memory: '' }, files: previous?.bundle?.files || [], dependencies: previous?.bundle?.dependencies || [], requirements: previous?.bundle?.requirements || { platforms: [], tools: [] } });
-  return previewLibraryEntry({ expectedUserId: state.user.id, id: previous?.id, bundle, title: clean.displayName, description: clean.description, expectedRevision, workspaceId });
+  return previewLibraryEntry({ expectedUserId: state.user.id, id: previous?.id, bundle, title: clean.displayName, description: clean.description, expectedRevision, workspaceId, syncMode });
 }
 export async function previewLocalPublish({ agent: reference, kind = 'agent', skillId, workflowId, workspaceId = null, id = null, expectedRevision = 0 }) {
   const state = await requireAccount({ force: true });
@@ -221,7 +224,7 @@ export async function previewLocalPublish({ agent: reference, kind = 'agent', sk
   const agent = getAgent(localId), input = { agent, agentDirectory: path.join(agentTeamsRoot(), agent.id) };
   const bundle = kind === 'agent' ? exportAgentBundle(input) : kind === 'skill' ? exportSkillBundle({ ...input, skillId }) : kind === 'workflow' ? exportWorkflowBundle({ ...input, workflowId }) : null;
   if (!bundle) throw fault('未知套件種類');
-  return saveDraft({ id, kind, slug: bundle.spec.id, title: bundle.spec.displayName || bundle.spec.name, description: bundle.spec.description || '', bundle, workspaceId, expectedRevision, message: 'Confirmed local publication' }, state);
+  return saveDraft({ id, kind, slug: bundle.spec.id, title: bundle.spec.displayName || bundle.spec.name, description: bundle.spec.description || '', bundle, workspaceId, expectedRevision, syncMode: 'cloud', message: 'Confirmed local publication' }, state);
 }
 export async function commitSourcePreview({ token, userConfirmation }) {
   if (!/^local_[a-f0-9]{64}$/.test(token || '') || !affirmative.test(String(userConfirmation || '').trim())) throw fault('請先檢視完整內容並明確確認儲存。');
@@ -237,11 +240,24 @@ export async function commitSourcePreview({ token, userConfirmation }) {
   try {
     if (!fs.existsSync(file)) throw fault('此預覽已經儲存。', 'conflict', 409);
     assertAccount(state.user.id);
-    saved = await localLibrary(state).stageConfirmed(draft);
+    // Older previews explicitly described queued synchronization. Preserve them
+    // while every newly created preview records the requested mode above.
+    saved = await localLibrary(state).stageConfirmed({ ...draft, syncMode: draft.syncMode ?? 'cloud' });
     fs.unlinkSync(file);
   } finally { fs.closeSync(lock); fs.unlinkSync(`${file}.lock`); }
-  if (!state.offline) backgroundSync(state).catch(() => {});
-  return { ...saved, status: 'queued', message: '已保存至本機，等待背景同步。' };
+  if (saved.syncMode === 'cloud' && !state.offline) backgroundSync(state).catch(() => {});
+  return { ...saved, status: saved.syncMode === 'local-only' ? 'saved-local' : 'queued', message: saved.syncMode === 'local-only' ? '已保存至本機，可在登入核准且連線時執行；尚未加入雲端同步。' : '已保存至本機，等待背景同步。' };
+}
+export async function enableLibrarySync({ id, expectedHash, expectedLocalHash, userConfirmation }) {
+  if (!affirmative.test(String(userConfirmation || '').trim())) throw fault('請先檢視完整內容並明確確認加入雲端同步。');
+  if (!/^local:/.test(id || '') || !uuid.test(id.slice(6))) throw fault('只有本機草稿可以加入同步。', 'sync_mode_locked', 409);
+  const state = await requireAccount({ force: true });
+  const entry = await entryFor(id, { background: false, expectedUserId: state.user.id });
+  if (!expectedHash || entry.bundleHash !== expectedHash || !expectedLocalHash || entry.localHash !== expectedLocalHash) throw fault('本機版本已變更，請重新檢視。', 'revision_conflict', 409);
+  assertAccount(state.user.id);
+  const saved = localLibrary(state).enableSync(id, { expectedLocalHash });
+  backgroundSync(state).catch(() => {});
+  return { ...saved, status: 'queued', message: '已明確加入雲端同步，等待背景上傳。' };
 }
 export async function libraryItem(id) {
   const state = await requireAccount({ allowOffline: true }), entry = await entryFor(id, { background: false, expectedUserId: state.user.id });

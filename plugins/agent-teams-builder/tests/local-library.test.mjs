@@ -44,7 +44,66 @@ function fake() {
   const library = () => createLocalLibrary({ client, cloudRoot: root, userId: state.userId, now: () => time });
   return { state, client, library, tick: () => { time += 180001; } };
 }
-const stage = (library, extra = {}) => library.stageConfirmed({ bundle: makeBundle(), ...extra });
+// Existing cases explicitly exercise the confirmed cloud outbox.
+const stage = (library, extra = {}) => library.stageConfirmed({ bundle: makeBundle(), syncMode: "cloud", ...extra });
+
+test("new local-only drafts remain durable, editable and isolated without uploads during global sync", async () => {
+  const { state, library, tick } = fake(), a = library();
+  const local = a.stageConfirmed({ bundle: makeBundle() });
+  assert.equal(local.syncMode, "local-only"); assert.equal(local.syncState, "local-only");
+  assert.equal(local.assetId, null); assert.equal(local.hasCloudCopy, false);
+  assert.equal(state.calls.user, 0); assert.equal(a.snapshot().sync.pendingCount, 0);
+  const edited = a.stageConfirmed({ localId: local.id, expectedLocalHash: local.localHash, bundle: makeBundle("只存這台電腦") });
+  assert.equal(edited.syncMode, "local-only"); assert.equal(library().snapshot().entries[0].localHash, edited.localHash);
+  const cloud = stage(a, { slug: "cloud-reader" });
+  for (let i = 0; i < 3; i++) { tick(); await a.sync({ force: true }); }
+  assert.equal(state.calls.save, 1); assert.equal(state.assets.size, 1);
+  assert.equal(a.snapshot().entries.find(e => e.id === local.id).syncState, "local-only");
+  assert.equal(a.snapshot().entries.find(e => e.id === cloud.id).hasCloudCopy, true);
+  state.userId = "account-b"; assert.equal(library().snapshot().entries.length, 0);
+  state.userId = "account-a"; assert.equal(library().snapshot().entries.find(e => e.id === local.id).bundle.spec.description, "只存這台電腦");
+});
+
+test("enable sync is a durable full-entry CAS and only then permits one upload", async () => {
+  const { state, library } = fake(), a = library();
+  const local = a.stageConfirmed({ bundle: makeBundle() });
+  const changed = a.stageConfirmed({ localId: local.id, expectedLocalHash: local.localHash, bundle: local.bundle, title: "修改標題" });
+  assert.equal(changed.bundleHash, local.bundleHash); assert.notEqual(changed.localHash, local.localHash);
+  assert.throws(() => a.enableSync(local.id, { expectedLocalHash: local.localHash }), { code: "revision_conflict", status: 409 });
+  assert.equal(state.calls.save, 0); assert.equal(a.snapshot().entries[0].syncState, "local-only");
+  const queued = a.enableSync(local.id, { expectedLocalHash: changed.localHash });
+  assert.equal(queued.id, local.id); assert.equal(queued.syncMode, "cloud"); assert.equal(queued.syncState, "pending");
+  assert.equal(queued.bundleHash, changed.bundleHash); assert.notEqual(queued.localHash, changed.localHash);
+  assert.equal(state.calls.save, 0); assert.equal(library().snapshot().sync.pendingCount, 1);
+  assert.throws(() => a.enableSync(local.id, { expectedLocalHash: queued.localHash }), { code: "sync_mode_locked", status: 409 });
+  await a.sync(); await a.sync(); assert.equal(state.calls.save, 1); assert.equal(a.snapshot().entries[0].hasCloudCopy, true);
+});
+
+test("pre-policy unmarked pending drafts retain cloud authorization without rewriting immutable contents", async () => {
+  const { state, library } = fake(), a = library(), local = stage(a);
+  const head = JSON.parse(fs.readFileSync(path.join(root, "library", "account-a", "heads", `${local.id.slice(6)}.json`)));
+  const file = path.join(root, "library", "account-a", "drafts", local.id.slice(6), `${head.versionId}.json`);
+  const old = JSON.parse(fs.readFileSync(file)); delete old.payload.syncMode;
+  old.localHash = crypto.createHash("sha256").update(JSON.stringify(old.payload)).digest("hex");
+  fs.writeFileSync(file, JSON.stringify(old)); const before = fs.readFileSync(file, "utf8");
+  assert.equal(library().snapshot().entries[0].syncMode, "cloud");
+  await library().sync(); assert.equal(state.calls.save, 1); assert.equal(fs.readFileSync(file, "utf8"), before);
+});
+
+test("local-only cannot detach a cloud identity, team scope or a write in flight", async () => {
+  const { state, library } = fake(), a = library();
+  assert.throws(() => a.stageConfirmed({ bundle: makeBundle(), syncMode: "local-only", workspaceId: "workspace-a" }), { code: "sync_mode_locked" });
+  assert.throws(() => a.stageConfirmed({ bundle: makeBundle(), syncMode: "unknown" }));
+  let finish; state.barrier = new Promise(resolve => { finish = resolve; });
+  const cloud = stage(a), writing = a.sync();
+  while (!state.calls.save) await new Promise(resolve => setTimeout(resolve, 5));
+  try {
+    assert.throws(() => a.stageConfirmed({ localId: cloud.id, expectedLocalHash: cloud.localHash, bundle: cloud.bundle, syncMode: "local-only" }), { code: "sync_mode_locked" });
+  } finally { finish(); await writing; }
+  const saved = a.snapshot().entries[0];
+  assert.throws(() => a.stageConfirmed({ id: saved.assetId, localId: saved.id, expectedRevision: saved.revision, expectedLocalHash: saved.localHash, bundle: saved.bundle, syncMode: "local-only" }), { code: "sync_mode_locked" });
+  assert.equal(state.calls.save, 1); assert.equal(saved.syncMode, "cloud");
+});
 
 test("stage is durable before network, stable draft IDs use local CAS, clean cooldown makes zero requests", async () => {
   const { state, library, tick } = fake(), a = library();

@@ -64,7 +64,7 @@ globalThis.fetch = async (value, options = {}) => {
   try {
     await client.connect(transport);
     const tools = await client.listTools();
-    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "cloud_create_device_code", "cloud_create_invite", "cloud_create_workspace", "cloud_list", "cloud_prepare_run", "cloud_preview_publish", "cloud_status", "dashboard_open", 'library_commit', 'library_preview', 'library_resolve', 'library_sync', "workflow_prepare_run"]);
+    assert.deepEqual(tools.tools.map((tool) => tool.name).sort(), ["agent_commit", "agent_get", "agent_list", "agent_prepare_run", "agent_preview", "cloud_create_device_code", "cloud_create_invite", "cloud_create_workspace", "cloud_list", "cloud_prepare_run", "cloud_preview_publish", "cloud_status", "dashboard_open", 'library_commit', 'library_enable_sync', 'library_preview', 'library_resolve', 'library_sync', "workflow_prepare_run"]);
     const unauthenticated = await client.callTool({ name: 'agent_list', arguments: {} });
     assert.equal(unauthenticated.isError, true); assert.match(unauthenticated.content[0].text, /登入/);
     saveSession(userId);
@@ -72,6 +72,7 @@ globalThis.fetch = async (value, options = {}) => {
       name: "agent_preview",
       arguments: {
         action: "create",
+        syncMode: "cloud",
         spec: {
           id: "social-editor",
           displayName: "社群小編",
@@ -131,7 +132,7 @@ globalThis.fetch = async (value, options = {}) => {
     assert.equal(workflow.structuredContent.approvalMode, 'manual');
     assert.match(workflow.structuredContent.prompt, /遇到 approval 或 requiresApproval 節點必須停下來取得使用者明確確認/);
     const skillBundle = exportSpecBundle({ kind: 'skill', spec: preview.structuredContent.spec.skills[0] });
-    const skillPreview = await client.callTool({ name: 'library_preview', arguments: { bundle: skillBundle, title: '獨立關鍵字技能' } });
+    const skillPreview = await client.callTool({ name: 'library_preview', arguments: { bundle: skillBundle, title: '獨立關鍵字技能', syncMode: 'cloud' } });
     assert.equal(skillPreview.isError, undefined);
     const invalidCommit = await client.callTool({ name: 'library_commit', arguments: { token: skillPreview.structuredContent.token, userConfirmation: '先不要' } });
     assert.equal(invalidCommit.isError, true);
@@ -164,11 +165,33 @@ globalThis.fetch = async (value, options = {}) => {
     const resolvedDatabase = JSON.parse(fs.readFileSync(database, 'utf8'));
     assert.equal(resolvedDatabase.assets.length, 3);
     assert.equal(resolvedDatabase.assets.find(asset => asset.id === conflict.assetId).revision, 2, 'resolving as a copy must not overwrite the changed remote asset');
+    const localPreview = await client.callTool({ name: 'agent_preview', arguments: { action: 'create', spec: { ...preview.structuredContent.spec, id: 'only-here', displayName: '僅存本機助理' } } });
+    assert.equal(localPreview.isError, undefined); assert.equal(localPreview.structuredContent.syncMode, 'local-only');
+    const localCommit = await client.callTool({ name: 'agent_commit', arguments: { token: localPreview.structuredContent.token, userConfirmation: '確認只存本機' } });
+    assert.equal(localCommit.isError, undefined); assert.equal(localCommit.structuredContent.status, 'saved-local');
+    const localOnly = localCommit.structuredContent;
+    assert.equal(localOnly.hasCloudCopy, false); assert.equal(localOnly.assetId, null);
+    const localPrompt = await client.callTool({ name: 'agent_prepare_run', arguments: { agent: localOnly.id, task: '尋找關鍵字' } });
+    assert.equal(localPrompt.isError, undefined); assert.equal(localPrompt.structuredContent.local.syncMode, 'local-only');
+    await client.callTool({ name: 'library_sync', arguments: {} });
+    assert.equal(JSON.parse(fs.readFileSync(database, 'utf8')).saves, resolvedDatabase.saves, 'global sync and local preparation cannot upload a local-only draft');
+    const enableArgs = { id: localOnly.id, expectedHash: localOnly.bundleHash, expectedLocalHash: localOnly.localHash, userConfirmation: '確認加入私人雲端同步' };
+    const noConfirmation = await client.callTool({ name: 'library_enable_sync', arguments: { ...enableArgs, userConfirmation: '先不要' } });
+    assert.equal(noConfirmation.isError, true);
+    const staleEnable = await client.callTool({ name: 'library_enable_sync', arguments: { ...enableArgs, expectedLocalHash: 'stale' } });
+    assert.equal(staleEnable.isError, true);
+    assert.equal(JSON.parse(fs.readFileSync(database, 'utf8')).saves, resolvedDatabase.saves);
+    const enabled = await client.callTool({ name: 'library_enable_sync', arguments: enableArgs });
+    assert.equal(enabled.isError, undefined); assert.equal(enabled.structuredContent.status, 'queued'); assert.equal(enabled.structuredContent.id, localOnly.id);
+    await client.callTool({ name: 'library_sync', arguments: {} });
+    assert.equal(JSON.parse(fs.readFileSync(database, 'utf8')).saves, resolvedDatabase.saves + 1);
     saveSession(otherUserId, 'b');
     const otherList = await client.callTool({ name: 'agent_list', arguments: {} });
     assert.equal(otherList.isError, undefined); assert.deepEqual(otherList.structuredContent.agents, []);
     const forbidden = await client.callTool({ name: 'agent_get', arguments: { agent: localId } });
     assert.equal(forbidden.isError, true, 'another account cannot read the first account local ID');
+    const forbiddenEnable = await client.callTool({ name: 'library_enable_sync', arguments: enableArgs });
+    assert.equal(forbiddenEnable.isError, true, 'another account cannot enable synchronization for the first account local ID');
     fs.unlinkSync(path.join(cloud, 'session.json'));
     const signedOut = await client.callTool({ name: 'agent_prepare_run', arguments: { agent: localId, task: '不應執行' } });
     assert.equal(signedOut.isError, true); assert.match(signedOut.content[0].text, /登入/);

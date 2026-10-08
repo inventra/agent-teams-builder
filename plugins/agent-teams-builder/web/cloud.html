@@ -4,16 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>VIXO 雲端帳號</title>
-  <link rel="stylesheet" href="/styles.css">
-  <style>
-    body{max-width:1000px;margin:auto;padding:32px}section{background:white;padding:24px;border:1px solid #ddd;border-radius:16px;margin:20px 0}label{display:block;margin:14px 0}input,select{width:100%;padding:10px}button{margin:8px 8px 8px 0;padding:10px 16px}pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:440px;overflow:auto}#notice{white-space:pre-wrap}li{margin:12px 0}.actions{display:flex;gap:12px;flex-wrap:wrap}.account-form{max-width:480px}.account-note{background:#f4f1ff;border:1px solid #e2dcfa;border-radius:10px;padding:14px 16px;line-height:1.8;font-size:13px}.account-hint{font-size:12px;color:#667085;line-height:1.8}.advanced-connect{border-top:1px solid #e7e7ed;margin-top:20px;padding-top:16px}.advanced-connect summary{cursor:pointer;font-size:13px;color:#667085}.advanced-connect p{font-size:12px;line-height:1.8}.advanced-connect form{max-width:480px}.credential-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.credential-grid label{min-width:0}h2{line-height:1.5}@media(max-width:600px){body{padding:18px}section{padding:20px}.credential-grid{grid-template-columns:1fr}.actions{gap:5px}}
-  </style>
+  <link rel="stylesheet" href="/cloud-panel.css">
 </head>
-<body>
-  <header><h1>VIXO 雲端帳號</h1><p>用同一組帳號密碼，跨裝置使用你的 Agent、Skill 與 Workflow。</p><a href="/" id="back">返回 VIXO</a></header>
-  <p id="notice" role="status" aria-live="polite"></p>
-  <section id="connect">
-    <h2>登入這台裝置</h2>
+<body class="vixo-cloud">
+  <div class="cloud-shell">
+  <header class="cloud-header">
+    <div class="cloud-brand"><span class="cloud-brand-mark" aria-hidden="true">V</span><div><strong>VIXO</strong><span>AGENT TEAMS</span></div></div>
+    <a href="/" id="back" class="back-link"><span aria-hidden="true">←</span> 返回 VIXO</a>
+  </header>
+  <div class="cloud-hero">
+    <div><p class="eyebrow">YOUR TEAM, CONNECTED</p><h1>VIXO 雲端帳號</h1><p class="hero-description">用同一組帳號密碼，跨裝置使用你的<br class="desktop-break"> Agent、Skill 與 Workflow。</p></div>
+    <div class="cloud-principle"><span class="principle-icon" aria-hidden="true"><svg viewBox="0 0 32 32" fill="none"><path d="M10 23H8a6 6 0 0 1-.5-12 8.5 8.5 0 0 1 16-1A6.5 6.5 0 0 1 25 23h-3M16 14v14m-4-4 4 4 4-4" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg></span><div><h2>在本機執行・雲端保存與分享</h2><p>流程在你的裝置執行，訓練成果可跨裝置同步，<br class="desktop-break">也能分享給有權限的團隊同仁。</p></div></div>
+  </div>
+  <p id="notice" class="cloud-notice" role="status" aria-live="polite"></p>
+  <main class="cloud-content">
+  <section id="connect" class="cloud-card">
+    <div class="section-kicker">ACCOUNT ACCESS</div><h2>登入這台裝置</h2>
     <p>輸入你在 VIXO 設定的帳號密碼，即可取得原本的雲端內容。</p>
     <form id="login" class="account-form">
       <label>帳號<input id="login-account" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required maxlength="32" placeholder="你的 VIXO 帳號"></label>
@@ -41,17 +47,18 @@
       <form id="pair"><label>一次性裝置連線碼或團隊邀請碼<input id="pair-code" type="password" autocomplete="off" required></label><button type="submit">使用連線碼</button></form>
     </details>
   </section>
-  <section id="access-state" hidden>
+  <section id="access-state" class="cloud-card access-card" hidden>
+    <div class="section-kicker">ACCOUNT STATUS</div>
     <h2 id="access-title">請重新確認使用權限</h2><p id="access-message"></p>
     <p class="account-hint">核准只開放雲端使用資格。團隊分享需另外邀請；其他人的私人資料不會開放。</p>
-    <button id="access-recheck" class="primary">重新檢查狀態</button><button id="access-disconnect">登出此裝置</button>
+    <button id="access-recheck" class="primary">重新檢查狀態</button><button id="access-disconnect" class="quiet">登出此裝置</button>
   </section>
-  <section id="account" hidden>
-    <h2>雲端已連線</h2>
-    <p id="identity"></p>
-    <div id="account-setup" hidden>
-      <h3>設定帳號密碼</h3>
-      <p class="account-note">為目前這份雲端資料設定登入方式。你的 Agent、Skill、Workflow 和團隊權限會保留；完成後可在網站直接登入。</p>
+  <section id="account" class="cloud-card" hidden>
+    <div class="section-kicker"><span class="connection-dot" aria-hidden="true"></span> CONNECTED ACCOUNT</div><h2>雲端已連線</h2>
+    <p id="identity" class="identity-badge"></p>
+    <div id="account-setup" class="setup-panel" hidden>
+      <div class="setup-copy"><h3>設定帳號密碼</h3>
+      <p class="account-note">為目前這份雲端資料設定登入方式。你的 Agent、Skill、Workflow 和團隊權限會保留；完成後可在網站直接登入。</p></div>
       <form id="credentials" class="account-form">
         <label>設定帳號<input id="setup-account" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32" placeholder="3–32 個字元，英文字母開頭"></label>
         <div class="credential-grid">
@@ -62,17 +69,20 @@
         <button class="primary" type="submit">儲存帳號密碼</button>
       </form>
     </div>
-    <div class="actions"><button id="manage-accounts" hidden>帳號管理</button><button id="portal">開啟雲端管理中心</button><button id="disconnect">登出此裝置</button></div>
+    <div class="actions account-actions"><button id="manage-accounts" hidden>帳號管理</button><button id="portal" class="primary">開啟雲端管理中心</button><button id="disconnect" class="quiet">登出此裝置</button></div>
     <p id="portal-help" class="account-hint"></p>
     <details class="advanced-connect" id="advanced-device"><summary>進階：產生一次性裝置換機碼</summary><p>平常換裝置請直接使用帳號密碼登入。此連線碼只用於自己的裝置，不能用來分享給同仁。</p><button id="device-code">連接另一台自己的裝置</button><p id="device-result"></p></details>
   </section>
-  <section id="account-admin" hidden><h2>帳號管理</h2><p>帳號核准後仍需另外加入團隊。管理員帳號不能在此停用。</p><div id="account-list"></div><button id="close-accounts">關閉帳號管理</button></section>
-  <section id="publish-section" hidden>
-    <h2>把本地訓練成果上傳</h2><p>先檢視完整內容，再確認發布。個人記憶與執行紀錄不會包含在共用套件。</p>
+  <section id="account-admin" class="cloud-card" hidden><div class="section-kicker">TEAM ACCESS</div><h2>帳號管理</h2><p>帳號核准後仍需另外加入團隊。管理員帳號不能在此停用。</p><div id="account-list"></div><button id="close-accounts">關閉帳號管理</button></section>
+  <section id="publish-section" class="cloud-card" hidden>
+    <div class="section-kicker">SAVE & SHARE</div><h2>把本地訓練成果上傳</h2><p>先檢視完整內容，再確認發布。個人記憶與執行紀錄不會包含在共用套件。</p>
     <form id="preview"><label>本地 Agent<select id="local-agent" required></select></label><label>發布內容<select id="kind"><option value="agent">完整 Agent</option><option value="skill">單一 Skill</option><option value="workflow">單一 Workflow（含所需 Skill）</option></select></label><label id="resource-label" hidden>Skill／Workflow<select id="resource"></select></label><label>發布到<select id="workspace"><option value="">我的個人空間</option></select></label><button>預覽完整內容</button></form>
     <div id="draft" hidden><pre id="draft-content"></pre><button id="confirm" class="primary">已檢視，確認發布到雲端</button></div>
   </section>
-  <section id="assets-section" hidden><h2>雲端內容</h2><p>回到 VIXO 即可看到雲端 Agent；獨立 Skill 與 Workflow 可在 Codex 使用 cloud_prepare_run。</p><button id="reload">重新同步清單</button><ul id="assets"></ul><pre id="asset-detail"></pre></section>
+  <section id="assets-section" class="cloud-card" hidden><div class="section-kicker">CLOUD LIBRARY</div><h2>雲端內容</h2><p>回到 VIXO 資料庫查看 Agent、Skill 與 Workflow。下載後，由目前裝置上的 Codex 執行。</p><button id="reload">重新同步清單</button><ul id="assets"></ul><pre id="asset-detail"></pre></section>
+  </main>
+  <footer class="cloud-footer"><span>VIXO AGENT TEAMS</span><p>你的帳號、你的資料；團隊分享由你決定。</p></footer>
+  </div>
   <script type="module" src="/cloud-panel.mjs"></script>
 </body>
 </html>

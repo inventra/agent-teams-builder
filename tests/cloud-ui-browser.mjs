@@ -49,9 +49,9 @@ const server = createServer(async (request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   if (pathname === '/config.json') { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({url:'https://fixture.invalid',key:'public-fixture-key'})); return; }
   if (pathname === '/cloud-client.mjs') { response.setHeader('content-type', 'text/javascript'); response.end(fixture); return; }
-  if (pathname === '/local-cloud' || pathname === '/cloud-panel.mjs' || pathname === '/embed-navigation.mjs') {
-    response.setHeader('content-type',pathname.endsWith('.mjs') ? 'text/javascript' : 'text/html');
-    response.end(await readFile(path.join(root,'plugins/agent-teams-builder/web',pathname.endsWith('.mjs') ? pathname.slice(1) : 'cloud.html'))); return;
+  if (pathname === '/local-cloud' || pathname === '/cloud-panel.mjs' || pathname === '/embed-navigation.mjs' || pathname === '/cloud-panel.css') {
+    response.setHeader('content-type',pathname.endsWith('.mjs') ? 'text/javascript' : pathname.endsWith('.css') ? 'text/css' : 'text/html');
+    response.end(await readFile(path.join(root,'plugins/agent-teams-builder/web',pathname.endsWith('.mjs') || pathname.endsWith('.css') ? pathname.slice(1) : 'cloud.html'))); return;
   }
   const files = {'/':'index.html','/index.html':'index.html','/app.mjs':'app.mjs','/styles.css':'styles.css'};
   if (!files[pathname]) { response.writeHead(404).end(); return; }
@@ -207,6 +207,7 @@ try {
  assert.equal(await page.evaluate(()=>Boolean(JSON.parse(localStorage.getItem('vixo.cloud.session.v1'))?.access_token)),true,'fresh session was not saved');
  await otherTab.close();
  const panel = await browserContext.newPage();
+ async function screenshotPanel(name) { if(!screenshotDir)return; await panel.evaluate(()=>document.fonts.ready.then(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))))); await panel.screenshot({path:path.join(screenshotDir,name),fullPage:true,animations:'disabled'}); }
  panel.on('pageerror', error => errors.push(error.message));
  let actor = 'identity-a', accountUsername = null, localAccessStatus = 'approved', localIsAdmin = true, localCalls = [], localAccounts = [{userId:'identity-a',status:'approved',isAdmin:true,displayName:'Kevin'},{userId:'waiting-local',status:'pending',isAdmin:false,username:'waiting_local',displayName:'本機待審同仁'}], setupSessionUnavailable = false, localDisconnectCalls = 0, localSetupCalls = 0, delayedRoute = null, releaseDelayed = null, delayKind = null;
  await panel.route('**/api/cloud/**', async route => {
@@ -238,7 +239,18 @@ try {
  });
  await panel.goto('http://127.0.0.1:'+server.address().port+'/local-cloud?token=local-fixture-token');
  await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
+ assert.match(await panel.evaluate(()=>getComputedStyle(document.body).fontFamily),/sans-serif/,'local cloud panel uses VIXO system sans typography');
+ await panel.keyboard.press('Tab');
+ assert.equal(await panel.locator('#back').evaluate(element=>getComputedStyle(element).outlineStyle),'solid','return link has visible keyboard focus');
+ await screenshotPanel('vixo-local-cloud-desktop.png');
+ for(const width of [390,320]) {
+   await panel.setViewportSize({width,height:844});
+   assert.equal(await panel.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true,'local cloud layout overflows at '+width);
+   await screenshotPanel('vixo-local-cloud-'+width+'.png');
+ }
+ await panel.setViewportSize({width:1440,height:1040});
  await panel.getByRole('button',{name:'帳號管理',exact:true}).click();
+ await panel.locator('#account-admin:not([hidden])').waitFor(); await screenshotPanel('vixo-local-cloud-admin.png');
  await panel.getByRole('region',{name:'待審核',exact:true}).getByRole('button',{name:'核准',exact:true}).click();
  await panel.locator('#account-list .actions').filter({hasText:'本機待審同仁'}).getByRole('button',{name:'停用',exact:true}).waitFor();
  assert.equal(await panel.locator('#account-list .actions').filter({hasText:'Kevin'}).getByRole('button').count(),0);
@@ -277,9 +289,10 @@ try {
  await panel.waitForFunction(()=>document.getElementById('asset-detail').textContent.includes('DETAIL-identity-a'));
  await panel.getByRole('button',{name:'預覽完整內容',exact:true}).click();
  await panel.locator('#draft:not([hidden])').waitFor();
- await panel.getByRole('button',{name:'登出此裝置',exact:true}).click();
+ await panel.getByRole('button',{name:'登出此裝置',exact:true}).click(); await panel.getByText('已登出此裝置。',{exact:true}).waitFor();
  await panel.locator('#connect:not([hidden])').waitFor();
  for(const id of ['device-result','draft-content','asset-detail']) assert.equal(await panel.locator('#'+id).textContent(),'','old identity data retained: '+id);
+ await screenshotPanel('vixo-local-cloud-login.png');
  async function pairPanel(id) { await panel.locator('#advanced-pair > summary').click(); await panel.getByLabel('一次性裝置連線碼或團隊邀請碼').fill(id); await panel.getByRole('button',{name:'使用連線碼',exact:true}).click(); await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor(); }
  await panel.getByLabel('帳號',{exact:true}).fill('fixture_user');
  await panel.getByLabel('密碼',{exact:true}).fill('fixture-only-password');
@@ -287,7 +300,7 @@ try {
  await panel.getByText('已登入，原有雲端內容已載入。',{exact:true}).waitFor();
  assert.equal(actor,'identity-a');
  assert.equal(await panel.getByLabel('密碼',{exact:true}).inputValue(),'');
- await panel.getByRole('button',{name:'登出此裝置',exact:true}).click();
+ await panel.getByRole('button',{name:'登出此裝置',exact:true}).click(); await panel.getByText('已登出此裝置。',{exact:true}).waitFor();
  await panel.locator('#connect:not([hidden])').waitFor();
  await pairPanel('identity-b');
  assert.equal(await panel.locator('#device-result').textContent(),'','old device capability revealed to next identity');
@@ -297,7 +310,7 @@ try {
    await panel.getByRole('button',{name:endpoint === 'device-code' ? '連接另一台自己的裝置' : '測試雲端資產 · agent · v1'}).click();
    for(let attempt=0; !delayedRoute && attempt<500; attempt++) await new Promise(resolve=>setTimeout(resolve,10));
    assert.ok(delayedRoute,'delayed fixture request was not started');
-   await panel.getByRole('button',{name:'登出此裝置',exact:true}).click();
+   await panel.getByRole('button',{name:'登出此裝置',exact:true}).click(); await panel.getByText('已登出此裝置。',{exact:true}).waitFor();
    await panel.locator('#connect:not([hidden])').waitFor();
    await pairPanel('identity-next-'+endpoint);
    releaseDelayed();
@@ -328,7 +341,7 @@ try {
  await panel.getByLabel('密碼',{exact:true}).fill('fixture-only-password');
  await panel.getByRole('button',{name:'登入雲端',exact:true}).click();
  await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
- await panel.getByRole('button',{name:'登出此裝置',exact:true}).click();
+ await panel.getByRole('button',{name:'登出此裝置',exact:true}).click(); await panel.getByText('已登出此裝置。',{exact:true}).waitFor();
  await panel.locator('#connect:not([hidden])').waitFor();
  await panel.locator('#registration > summary').click();
  await panel.getByLabel('姓名',{exact:true}).fill('新同仁 <img src=x onerror=alert(1)>');

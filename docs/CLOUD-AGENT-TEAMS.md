@@ -1,6 +1,6 @@
 # VIXO Agent Teams 雲端版本
 
-v1.12.0 先登入，再以同一份資料庫查看目前帳號擁有的本地草稿與雲端 Agent、Skill、Workflow。完整預覽經 Double Check 後先保存本地與持久同步佇列，每 180 秒嘗試同步。新帳號仍待 Kevin 審核；執行由目前裝置上的 Codex／Claude 與本地工具完成，開始／續跑時需線上查核核准與資產權限。換機同步的是已同步的角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
+v1.12.0 先登入，再以同一份資料庫查看目前帳號擁有的本地草稿與雲端 Agent、Skill、Workflow。完整預覽經 Double Check 後預設僅保存本機。明確開啟雲端同步的項目才加入持久佇列，每 180 秒嘗試同步；立即同步也不會上傳僅存本機的草稿。新帳號仍待 Kevin 審核；執行由目前裝置上的 Codex／Claude 與本地工具完成，開始／續跑時需線上查核核准與資產權限。換機同步的是已同步的角色定義、SOP、程式與流程，不是模型權重或另一台電腦的登入狀態。
 
 ## Git、Supabase 與本地裝置
 
@@ -10,9 +10,15 @@ v1.12.0 先登入，再以同一份資料庫查看目前帳號擁有的本地草
 | Supabase | 個人／團隊身分與權限、已同步的 Agent／Skill／Workflow 套件、不可改寫的歷史版本、裝置連線碼及邀請碼的雜湊。 |
 | 本地 VIXO | 裝置 session、按帳號隔離的本地定義與同步佇列、固定版本快取、Codex／Claude 執行，以及 ERP 所需的本地工具與環境。 |
 
-Git commit 是程式版本；Supabase revision 是每個雲端資產的內容版本，本地版本另以 localHash 判斷內容變化。登入後的清單合併本人本地草稿與授權雲端內容，顯示「待同步／已同步／衝突」。未登入不能以同名本地檔案替代帳號資料；離線可保留本人草稿，但不能開始或續跑任務。
+Git commit 是程式版本；Supabase revision 是每個雲端資產的內容版本，本地版本另以 localHash 判斷內容變化。登入後的清單合併本人本地草稿與授權雲端內容，分別顯示「僅存本機／本機＋雲端」與「未開啟同步／待同步／已同步／衝突」。未上傳的本人草稿仍可在帳號線上核准後執行。未登入不能以同名本地檔案替代帳號資料；離線可保留本人草稿，但不能開始或續跑任務。
 
 雲端管理頁位址由 `plugins/agent-teams-builder/web/cloud-config.json` 的 `portalUrl` 指定。前端設定只包含 Supabase 公開 URL／publishable key；service-role key 只留在服務端。發布狀態請以 GitHub Release、Pages deployment 與 Supabase migration／Edge Function 的實際結果為準。
+
+## 公用 Skills 與執行位置
+
+左側「公用 Skills」及資料庫 Skill 分頁都顯示 `erp-video-automation`、`expense-claim-helper`、`vixo-video-intake`。這些是 GitHub 共用套件，隨外掛安裝到本機，讀取技能不需每次下載。可以查看版本、完整技能與配套文件，取得提示後交由目前 Codex／Claude Session 執行。它們不是某個人的 Supabase 私人資產。
+
+新的本人草稿使用 `syncMode: local-only`，確認回傳 `saved-local`；要上傳時，以 `library_enable_sync` 傳入 id、目前 bundleHash（expectedHash）、localHash（expectedLocalHash）及明確確認。也可在首次完整預覽中選擇 `syncMode: cloud`。已同步項目編輯後仍同步，不能用切換顯示方式刪除或隱藏既有雲端副本。雲端保存與分享內容，實際工作一律由當前裝置執行。
 
 ## 帳號設定與登入
 
@@ -20,7 +26,7 @@ VIXO 雲端使用自己的帳號密碼；Codex／Claude 仍使用原有宿主登
 
 ### 已連線的既有裝置
 
-1. 更新至 v1.12.0，開新 Session，呼叫 `dashboard_open`，進入「雲端同步」。
+1. 更新至 v1.12.0，開新 Session，呼叫 `dashboard_open`，進入「團隊與雲端管理」。
 2. 若尚未設定帳號，選擇「設定帳號密碼」，直接在表單設定。
 3. 設定會綁定目前已連線的身分，保留原有 UUID、私人 Agent、歷史版本與團隊權限；不另外建立一個空白帳號。
 4. 之後在外掛或[雲端管理中心](https://inventra.github.io/agent-teams-builder/)用這組帳號密碼登入。以 `cloud_status` 確認目前身分，`agent_list` 查看合併的 Agent，`cloud_list` 查看本地／雲端合併的 Agent、Skill、Workflow。

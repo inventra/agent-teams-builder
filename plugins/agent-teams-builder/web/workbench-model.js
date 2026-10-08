@@ -110,7 +110,12 @@ export function dashboardSessionMode(session) {
   if (session.access?.status !== "approved") return "unverified";
   return session.offline ? "offline" : "approved";
 }
-export const SYNC_LABELS = Object.freeze({local:"僅在本機",pending:"等待同步",synced:"已同步",conflict:"版本衝突",uncertain:"同步結果待確認",error:"同步失敗"});
+export const SYNC_LABELS = Object.freeze({"local-only":"未開啟同步",local:"僅在本機",pending:"等待同步",synced:"已同步雲端",conflict:"版本衝突",uncertain:"同步結果待確認",error:"同步失敗"});
+export function libraryLocation(entry) {
+  const cloudLinked = Boolean(entry.assetId || entry.id?.startsWith("cloud:"));
+  return { cloudLinked, storage: cloudLinked ? "本機＋雲端" : "僅存本機",
+    scope: entry.workspaceId ? (cloudLinked ? "團隊共享" : "待同步至團隊") : "私人內容", execution: "本機執行" };
+}
 export function visibleLibrary(entries, session, kind) {
   const mode = dashboardSessionMode(session);
   if (!["approved", "offline"].includes(mode)) return [];
@@ -140,7 +145,7 @@ export function libraryWithAgentChildren(entries=[], agents=[]) {
     if(!parent)continue;
     for(const [kind,children] of [["skill",agent.skills||[]],["workflow",agent.workflows||[]]])
       for(const child of children)rows.push({id:`${parent.id}/${kind}:${child.id}`,parentId:parent.id,parentTitle:parent.title,
-        kind,title:child.name,slug:child.id,description:child.description||"",syncState:parent.syncState,workspaceId:parent.workspaceId,revision:parent.revision});
+        kind,title:child.name,slug:child.id,description:child.description||"",syncState:parent.syncState,syncMode:parent.syncMode,assetId:parent.assetId,workspaceId:parent.workspaceId,revision:parent.revision});
   }
   return rows;
 }

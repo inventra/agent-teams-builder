@@ -51,7 +51,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     button("theme", "", 'aria-label="切換明暗主題"') + button("refresh", "", 'aria-label="重新整理"') + "</div>" +
     '<div class="wb-dimbar"><div class="wb-segment" id="wb-period">' +
     ["today", "week", "month"].map((period) => button("period", ({ today: "今天", week: "本週", month: "本月" })[period],
-      'data-id="' + period + '"')).join("") + '</div><span class="wb-scope">VIXO 獨立工作區 · 目前登入帳號</span>' +
+      'data-id="' + period + '"')).join("") + '</div><span class="wb-scope" id="wb-scope">VIXO 獨立工作區 · 本機執行</span>' +
     '<span id="wb-sync" role="status"></span></div><div id="wb-error" role="alert" hidden></div><div id="wb-stage"></div>' +
     '<dialog id="wb-detail" class="wb-dialog"><div class="wb-dialog-heading"><b id="wb-detail-title"></b>' +
     button("close-detail", "", 'aria-label="關閉詳情"') + '</div><div id="wb-detail-body"></div></dialog>' +
@@ -211,6 +211,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
     if ($("#wb-stage").contains(focused) && ["INPUT", "TEXTAREA", "SELECT"].includes(focused.tagName)) return;
     const focusAction = focused?.dataset.wb, focusId = focused?.dataset.id;
     syncTheme();
+    $("#wb-scope").textContent = (state.cloud?.user?.username || "目前登入帳號") + " · 本機執行 · 雲端保存與分享";
     $("#wb-sync").textContent = "更新 " + new Date(data.refreshedAt).toLocaleTimeString("zh-TW", { hour12: false });
     $("#wb-crumb-current").textContent = ({ home: "首頁總覽", office: "像素辦公室", skins: "介面樣式",
       functions: "功能層", system: "系統層", runs: "執行中心" })[view];
@@ -441,7 +442,7 @@ export function createWorkbench({ api, esc, toast, play, schedule, openThread, o
       generation++; active=false; initialized=false; refreshing=false; state=null; data=null; capabilities=null;
       preferences=defaultPreferences(); preferenceRevision++; dragId=null; resizing=null; officeFloor=0; view="home";
       root.hidden=true; $("#wb-detail").close(); $("#wb-layout").close(); $("#wb-search").value="";
-      for(const id of ["wb-stage","wb-detail-title","wb-detail-body","wb-layout-body","wb-sync","wb-error"]) $("#"+id).replaceChildren();
+      for(const id of ["wb-stage","wb-detail-title","wb-detail-body","wb-layout-body","wb-sync","wb-error","wb-scope"]) $("#"+id).replaceChildren();
       $("#wb-error").hidden=true; syncTheme();
     },
     navigate, refresh,
