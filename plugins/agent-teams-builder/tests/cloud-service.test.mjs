@@ -6,7 +6,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { createPreview, commitPreview } from '../src/store.mjs';
 import { cloudRoot, cloudClient, cloudStatus, previewLocalPublish, commitSourcePreview, previewSourceAgent, listSourceAgents, prepareSourceRun } from '../src/cloud-service.mjs';
-import { processSchedules, cloudRecordVisible, openCloudPortal } from '../src/dashboard-server.mjs';
+import { processSchedules, cloudRecordVisible, openCloudPortal, createDashboardServer } from '../src/dashboard-server.mjs';
 const uid = '10000000-0000-4000-8000-000000000001', aid = '20000000-0000-4000-8000-000000000001';
 const spec = { id: 'demo-agent', displayName: '測試助理', description: '測試', purpose: '整理資訊', systemPrompt: '依照需求整理資訊', memory: 'private note', skills: [{ id: 'summarize', name: '摘要', description: '整理資料', triggers: ['摘要'], steps: ['閱讀內容', '整理重點'], successCriteria: ['完整摘要'] }], workflows: [{ id: 'daily', name: '每日摘要', description: '整理流程', nodes: [{ id: 'start', name: '摘要', type: 'skill', skillId: 'summarize', instructions: '完成摘要' }] }] };
 test('sandboxed panel opener uses only the fixed public portal and no shell', async () => {
@@ -29,6 +29,7 @@ test('local preview publication, cloud training and execution use cloud versions
   globalThis.fetch = async (input, options = {}) => {
     const url = new URL(input);
     if (url.pathname === '/auth/v1/user') return reply({ id: userId, email: 'test@devices.vixo.invalid' });
+    if (url.pathname === '/rest/v1/rpc/vixo_my_access') return reply({ userId, status: 'approved', isAdmin: false });
     if (url.pathname === '/rest/v1/vixo_assets') return reply(asset ? [asset] : []);
     if (url.pathname === '/rest/v1/rpc/vixo_save_asset') {
       const body = JSON.parse(options.body);
@@ -87,4 +88,37 @@ test('cloud run history is scoped to the connected identity including legacy and
   assert.equal(cloudRecordVisible({ agentId: `cloud:${aid}` }, uid), false);
   assert.equal(cloudRecordVisible({ agentId: 'local-agent' }, null), true);
   assert.equal(cloudRecordVisible({ agentId: 'local-agent' }, uid), false);
+});
+
+test('local cloud panel exposes pending status but blocks data and account administration behind local authentication', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vixo-approval-api-'));
+  const oldRoot = process.env.AGENT_TEAMS_HOME, originalFetch = globalThis.fetch;
+  process.env.AGENT_TEAMS_HOME = root;
+  const { server, token } = createDashboardServer({ token: 'local-test-bearer' });
+  globalThis.fetch = async (input, options) => {
+    const url = new URL(input);
+    if (url.hostname === '127.0.0.1') return originalFetch(input, options);
+    if (url.pathname === '/auth/v1/user') return Response.json({ id: uid, email: 'qa@accounts.vixo.invalid', app_metadata: { vixo_username: 'qa' } });
+    if (url.pathname === '/rest/v1/rpc/vixo_my_access') return Response.json({ userId: uid, status: 'pending', isAdmin: false });
+    throw new Error('Unexpected private data request');
+  };
+  try {
+    fs.writeFileSync(path.join(cloudRoot(), 'session.json'), JSON.stringify({ access_token: 'fixture-access', refresh_token: 'fixture-refresh' }));
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const base = `http://127.0.0.1:${server.address().port}/api/cloud/`;
+    const request = (route, body, authenticated = true) => originalFetch(base + route, { method: body === undefined ? 'GET' : 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? { authorization: `Bearer ${token}` } : {}) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const status = await request('status'); assert.equal(status.status, 200);
+    const data = await status.json(); assert.equal(data.connected, true); assert.equal(data.access.status, 'pending');
+    assert.doesNotMatch(JSON.stringify(data), /fixture-access|fixture-refresh/);
+    for (const route of ['assets', 'local-agents', 'accounts']) {
+      const response = await request(route); assert.equal(response.status, 403); assert.equal((await response.json()).code, 'account_pending');
+    }
+    const denied = await request('account-status', { userId: uid, status: 'approved' }); assert.equal(denied.status, 403);
+    const unauthenticated = await request('register', { username: 'qa_member', password: 'test-only-password', displayName: 'QA' }, false); assert.equal(unauthenticated.status, 401);
+    const existing = await request('register', { username: 'qa_member', password: 'test-only-password', displayName: 'QA' }); assert.equal(existing.status, 409); assert.equal((await existing.json()).code, 'account_already_connected');
+  } finally {
+    await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch;
+    if (oldRoot === undefined) delete process.env.AGENT_TEAMS_HOME; else process.env.AGENT_TEAMS_HOME = oldRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

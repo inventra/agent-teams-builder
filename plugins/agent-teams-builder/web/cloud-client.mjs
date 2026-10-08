@@ -55,8 +55,9 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
     } catch { throw new CloudError("無法連線雲端，請檢查網路後重試。", { code: "network_error" }); }
     const data = await response.json().catch(() => null);
     if (!response.ok) {
-      const code = (typeof data?.code === 'string' && data.code) || data?.error_code || "cloud_error";
+      let code = (typeof data?.code === 'string' && data.code) || data?.error_code || "cloud_error";
       const message = data?.message || data?.msg || data?.error_description || data?.error || `Cloud request failed (${response.status})`;
+      if (['account_pending', 'account_disabled', 'admin_required'].includes(message)) code = message;
       const conflict = code === "40001" || String(message).includes("revision_conflict");
       throw new CloudError(conflict ? "雲端已有新版本。你的修改已保留，請比較後再發布。" : message, { status: conflict ? 409 : response.status, code: conflict ? "revision_conflict" : code });
     }
@@ -89,10 +90,47 @@ export function createCloudClient({ url, key, fetchImpl = globalThis.fetch, getS
       const data = await raw(route, { ...options, token: session.access_token }); assertStorage(); checkGeneration(started); return data;
     }
   }
-  const rpc = (name, body) => request(`/rest/v1/rpc/${name}`, { method: "POST", body });
-  const table = (name, params) => request(`/rest/v1/${name}?${new URLSearchParams(params)}`);
+  async function getAccess() {
+    const access = await request('/rest/v1/rpc/vixo_my_access', { method: 'POST', body: {} });
+    if (!access?.userId || !['pending', 'approved', 'disabled'].includes(access.status) ||
+        (session?.user?.id && access.userId !== session.user.id)) throw new CloudError('無法確認帳號授權，請重新登入後再試。', { status: 403, code: 'access_unconfirmed' });
+    return { ...access, isAdmin: access.status === 'approved' && access.isAdmin === true };
+  }
+  async function requireApproved() {
+    const access = await getAccess();
+    if (access.status !== 'approved') throw new CloudError(access.status === 'disabled' ? '帳號已停用，請聯絡 Kevin。' : '帳號待 Kevin 審核，核准後即可使用。', { status: 403, code: `account_${access.status}` });
+    return access;
+  }
+  async function requireAdmin() {
+    const access = await requireApproved();
+    if (!access.isAdmin) throw new CloudError('只有管理員可以審核帳號。', { status: 403, code: 'admin_required' });
+  }
+  const rpc = async (name, body) => { await requireApproved(); return request(`/rest/v1/rpc/${name}`, { method: "POST", body }); };
+  const table = async (name, params) => { await requireApproved(); return request(`/rest/v1/${name}?${new URLSearchParams(params)}`); };
   const uuid = (value) => { if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(value || "")) throw new Error("Invalid cloud ID"); return value; };
   return {
+    getAccess,
+    requireApproved,
+    async registerAccount({ username, password, displayName } = {}) {
+      assertStorage(); const started = generation;
+      if (session?.access_token) throw new CloudError('目前已連線，請先登出再註冊；新帳號不會包含原身分的資料。', { status: 409, code: 'account_already_connected' });
+      const name = normalizeUsername(username);
+      if (typeof password !== 'string' || [...password].length < 12 || new TextEncoder().encode(password).length > 72) throw new CloudError('密碼至少 12 個字元；過長時請縮短後重試。', { code: 'invalid_password' });
+      const display = typeof displayName === 'string' ? displayName.trim() : '';
+      if (!display || [...display].length > 80) throw new CloudError('請填寫 1–80 個字元的姓名，讓管理員辨識。', { code: 'invalid_display_name' });
+      const data = await raw('/functions/v1/vixo-register', { method: 'POST', body: { username: name, password, displayName: display } });
+      if (!publicUser(data?.user).accountConfigured || publicUser(data.user).username !== name) throw new CloudError('註冊結果尚未確認，請先嘗試以剛設定的帳密登入。', { code: 'account_registration_unconfirmed' });
+      return adopt(data, started);
+    },
+    async listAccounts() {
+      await requireAdmin();
+      return request('/rest/v1/rpc/vixo_admin_list_accounts', { method: 'POST', body: {} });
+    },
+    async setAccountStatus(userId, status) {
+      if (!['approved', 'disabled'].includes(status)) throw new CloudError('無效的帳號狀態。', { code: 'invalid_account_status' });
+      await requireAdmin();
+      return request('/rest/v1/rpc/vixo_admin_set_account_status', { method: 'POST', body: { p_user_id: uuid(userId), p_status: status }, retryAuth: false });
+    },
     async signInWithPassword({ username, password } = {}) {
       assertStorage(); const started = generation;
       const name = normalizeUsername(username);

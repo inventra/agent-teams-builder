@@ -15,15 +15,21 @@ export function createCloudClient({getSession,saveSession}) {
  let user = getSession()?.user || {id:'user1',email:'fixture@devices.vixo.invalid',username:null,accountConfigured:false};
  let assets = []; let revisions = {}; let workspaces = [{id:'team1',name:'營運團隊',owner_id:'user1'}];
  window.fixtureCalls = [];
+ window.fixtureAccess = {userId:user.id,status:user.id === 'registered-user' ? 'pending' : 'approved',isAdmin:user.id === 'user1',username:user.username,displayName:user.id === 'user1' ? 'Kevin' : '新同仁'};
+ window.fixtureAccounts = [{userId:'user1',status:'approved',isAdmin:true,username:null,displayName:'Kevin',createdAt:'2026-10-08T00:00:00Z'},{userId:'waiting-user',status:'pending',isAdmin:false,username:'waiting_user',displayName:'待審同仁',createdAt:'2026-10-08T00:00:00Z'},{userId:'approved-user',status:'approved',isAdmin:false,username:'approved_user',displayName:'已核准同仁',createdAt:'2026-10-08T00:00:00Z'},{userId:'disabled-user',status:'disabled',isAdmin:false,username:'disabled_user',displayName:'已停用同仁',createdAt:'2026-10-08T00:00:00Z'}];
  let sessionFingerprint = getSession()?.access_token || null;
  return {
-  pairDevice: async code => { if(code !== 'fixture-code') throw new Error('連線碼無效'); window.fixtureCalls.push('pair'); if(sessionFingerprint !== (getSession()?.access_token || null)) throw new Error('已兌換但無法儲存：舊client仍綁定另一份session'); saveSession({access_token:'fixture-access',refresh_token:'fixture-refresh',user}); sessionFingerprint = 'fixture-access'; },
+  pairDevice: async code => { if(!['fixture-code','fixture-pending-code'].includes(code)) throw new Error('連線碼無效'); if(code === 'fixture-pending-code') {user={id:'invited-user',email:'invited@devices.vixo.invalid',username:null,accountConfigured:false}; window.fixtureAccess={userId:user.id,status:'pending',isAdmin:false};} window.fixtureCalls.push('pair'); if(sessionFingerprint !== (getSession()?.access_token || null)) throw new Error('已兌換但無法儲存：舊client仍綁定另一份session'); saveSession({access_token:'fixture-access',refresh_token:'fixture-refresh',user}); sessionFingerprint = 'fixture-access'; },
   signInWithPassword: async ({username,password}) => { window.fixtureCalls.push('login'); if(username !== 'fixture_user' || password !== 'fixture-only-password') throw Object.assign(new Error('invalid credentials'),{code:'invalid_credentials'}); user = {...user,username,accountConfigured:true}; saveSession({access_token:'fixture-access',refresh_token:'fixture-refresh',user}); sessionFingerprint = 'fixture-access'; },
   setupAccount: async ({username,password}) => { window.fixtureCalls.push('setup'); if(username === 'fixture_taken') throw Object.assign(new Error('unavailable'),{code:'username_unavailable',status:409}); user = {...user,username,accountConfigured:true}; if(username === 'fixture_unavailable') throw Object.assign(new Error('session mint failed'),{code:'account_bound_session_unavailable',status:503}); saveSession({access_token:'fixture-access',refresh_token:'fixture-refresh',user}); },
+  getAccess: async () => {window.fixtureCalls.push('access'); if(window.fixtureOffline) throw Object.assign(new Error('offline'),{code:'network_error'}); return structuredClone(window.fixtureAccess);},
+  registerAccount: async ({username,password,displayName}) => {window.fixtureCalls.push('register'); if(getSession()) throw Object.assign(new Error('connected'),{code:'account_already_connected'}); user={id:'registered-user',username,email:username+'@accounts.vixo.invalid',accountConfigured:true}; window.fixtureAccess={userId:user.id,status:'pending',isAdmin:false,username,displayName}; saveSession({access_token:'registered-access',refresh_token:'registered-refresh',user}); sessionFingerprint='registered-access';},
+  listAccounts: async () => {window.fixtureCalls.push('accounts'); return structuredClone(window.fixtureAccounts);},
+  setAccountStatus: async (id,status) => {window.fixtureCalls.push('status:'+id+':'+status); const row=window.fixtureAccounts.find(row=>row.userId===id); if(row.isAdmin) throw new Error('admin immutable'); row.status=status; return structuredClone(row);},
   getUser: async () => getSession()?.access_token ? user : null,
   signOut: async () => { saveSession(null); sessionFingerprint = null; },
-  listWorkspaces: async () => workspaces,
-  listAssets: async ({workspaceId}) => { window.fixtureCalls.push('list'); return assets.filter(a => a.workspace_id === (workspaceId || null)); },
+  listWorkspaces: async () => {window.fixtureCalls.push('workspaces'); return user.id === 'registered-user' ? [] : workspaces;},
+  listAssets: async ({workspaceId}) => { window.fixtureCalls.push('list'); return (window.fixtureAssetRows || assets).filter(a => a.workspace_id === (workspaceId || null)); },
   getAsset: async id => assets.find(a => a.id === id),
   listRevisions: async id => revisions[id] || [],
   saveAsset: async input => {
@@ -64,12 +70,17 @@ try {
  await page.getByRole('heading',{name:'登入 VIXO'}).waitFor();
  assert.equal(await page.evaluate(()=>window.fixtureCalls.length),0,'private data loaded before pairing');
  assert.equal(await page.getByLabel('密碼',{exact:true}).isVisible(),true);
- assert.equal(await page.getByRole('button',{name:/註冊/}).count(),0,'website offers public registration');
+ assert.equal(await page.getByRole('button',{name:'新同仁：註冊帳號',exact:true}).isVisible(),true,'self-registration entry is missing');
  assert.equal(await page.getByLabel('一次性裝置連線碼／團隊邀請碼').isVisible(),false,'legacy pairing is the primary login');
  await page.getByText('進階：使用裝置碼或團隊邀請碼',{exact:true}).click();
  await page.getByLabel('一次性裝置連線碼／團隊邀請碼').fill('fixture-code');
  await page.getByRole('button',{name:'使用連線碼',exact:true}).click();
  await page.getByRole('heading',{name:'我的 Agent',exact:true}).waitFor();
+ assert.match(await page.locator('#account').textContent(),/Kevin 管理員/,'unbound admin has no Kevin label');
+ await page.setViewportSize({width:390,height:844});
+ assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth <= innerWidth),'unconfigured admin controls overflow mobile');
+ await page.setViewportSize({width:1440,height:1040});
+
  await page.getByRole('button',{name:'＋ 建立／匯入'}).click();
  await page.getByLabel('顯示名稱').fill('ERP <img src=x onerror=alert(1)>');
  await page.getByLabel('識別名稱').fill('erp-helper');
@@ -138,6 +149,16 @@ try {
  await page.getByRole('button',{name:'產生一次性換機碼',exact:true}).click();
  await page.getByText('DEVICE-FIXTURE',{exact:true}).waitFor();
  await page.getByRole('button',{name:'完成',exact:true}).click();
+ await page.getByRole('button',{name:'帳號管理',exact:true}).click();
+ await page.getByRole('heading',{name:'帳號管理',exact:true}).waitFor();
+ assert.equal(await page.locator('dialog .account-row').filter({hasText:'Kevin'}).getByRole('button').count(),0,'admin account has mutable controls');
+ await page.getByRole('region',{name:'待審核',exact:true}).getByRole('button',{name:'核准',exact:true}).click();
+ await page.locator('dialog .account-row').filter({hasText:'待審同仁'}).getByRole('button',{name:'停用',exact:true}).waitFor();
+ await page.locator('dialog .account-row').filter({hasText:'已核准同仁'}).getByRole('button',{name:'停用',exact:true}).click();
+ await page.locator('dialog .account-row').filter({hasText:'已核准同仁'}).getByRole('button',{name:'恢復',exact:true}).waitFor();
+ await page.locator('dialog .account-row').filter({hasText:'已停用同仁'}).getByRole('button',{name:'恢復',exact:true}).click();
+ await page.locator('dialog .account-row').filter({hasText:'已停用同仁'}).getByRole('button',{name:'停用',exact:true}).waitFor();
+ await page.getByRole('button',{name:'完成',exact:true}).click();
  await page.getByRole('button',{name:'← 回到資產清單'}).click();
  const screenshotDir = process.env.VIXO_UI_SCREENSHOT_DIR;
  if(screenshotDir) { await mkdir(screenshotDir,{recursive:true}); await page.screenshot({path:path.join(screenshotDir,'vixo-cloud-desktop.png'),fullPage:true}); }
@@ -187,19 +208,25 @@ try {
  await otherTab.close();
  const panel = await browserContext.newPage();
  panel.on('pageerror', error => errors.push(error.message));
- let actor = 'identity-a', accountUsername = null, setupSessionUnavailable = false, localDisconnectCalls = 0, localSetupCalls = 0, delayedRoute = null, releaseDelayed = null, delayKind = null;
+ let actor = 'identity-a', accountUsername = null, localAccessStatus = 'approved', localIsAdmin = true, localCalls = [], localAccounts = [{userId:'identity-a',status:'approved',isAdmin:true,displayName:'Kevin'},{userId:'waiting-local',status:'pending',isAdmin:false,username:'waiting_local',displayName:'本機待審同仁'}], setupSessionUnavailable = false, localDisconnectCalls = 0, localSetupCalls = 0, delayedRoute = null, releaseDelayed = null, delayKind = null;
  await panel.route('**/api/cloud/**', async route => {
    const endpoint = new URL(route.request().url()).pathname.split('/').at(-1);
    const body = route.request().postDataJSON();
+   localCalls.push(endpoint);
    const currentActor = actor;
+   const currentAccess = {userId:actor,status:localAccessStatus,isAdmin:localIsAdmin,username:accountUsername};
    let data;
-   if(endpoint === 'status') data = {connected:Boolean(actor),user:actor ? {id:actor,username:accountUsername,accountConfigured:Boolean(accountUsername)} : null,portalUrl:'https://fixture.invalid/'};
+   if(endpoint === 'status') data = {connected:Boolean(actor),user:actor ? {id:actor,username:accountUsername,accountConfigured:Boolean(accountUsername)} : null,portalUrl:'https://fixture.invalid/',access:actor ? currentAccess : null};
+   else if(endpoint === 'access') data=currentAccess;
+   else if(endpoint === 'accounts') data=localAccounts;
+   else if(endpoint === 'account-status') {const row=localAccounts.find(row=>row.userId===body.userId); assert.equal(row.isAdmin,false); row.status=body.status; data=row;}
+   else if(endpoint === 'register') {assert.equal(body.password,'fixture-only-password'); actor='registered-local'; accountUsername=body.username; localAccessStatus='pending'; localIsAdmin=false; data={ok:true};}
    else if(endpoint === 'local-agents') data = [{id:'local-fixture',displayName:'本地測試',skills:[{id:'fixture-skill',name:'測試技能'}],workflows:[]}];
    else if(endpoint === 'workspaces') data = [{id:'team-one',name:'測試團隊'}];
-   else if(endpoint === 'assets') data = [{id:'fixture-asset',title:'測試雲端資產',kind:'agent',revision:1}];
-   else if(endpoint === 'pair') {actor = body.code; accountUsername=null; data = {ok:true};}
+   else if(endpoint === 'assets') data = actor === 'registered-local' ? [] : [{id:'fixture-asset',title:'測試雲端資產',kind:'agent',revision:1}];
+   else if(endpoint === 'pair') {actor = body.code; accountUsername=null; localAccessStatus='approved'; localIsAdmin=false; data = {ok:true};}
    else if(endpoint === 'setup-account') {localSetupCalls++; assert.equal(body.password,'fixture-only-password'); accountUsername=body.username; if(setupSessionUnavailable) { await route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'session mint failed',code:'account_bound_session_unavailable'})}); return; } data={ok:true};}
-   else if(endpoint === 'login') {assert.equal(body.username,'fixture_user'); assert.equal(body.password,'fixture-only-password'); actor='identity-a'; accountUsername='fixture_user'; data={ok:true};}
+   else if(endpoint === 'login') {assert.equal(body.username,'fixture_user'); assert.equal(body.password,'fixture-only-password'); actor='identity-a'; accountUsername='fixture_user'; localAccessStatus='approved'; localIsAdmin=true; data={ok:true};}
    else if(endpoint === 'disconnect') {localDisconnectCalls++; actor = null; data = {ok:true};}
    else if(endpoint === 'preview-upload') data = {token:'draft-'+actor,title:'測試預覽',kind:'agent',workspaceId:body.workspaceId,bundle:{privateFixture:actor}};
    else if(endpoint === 'open-portal') { assert.deepEqual(body,{},'client supplied an external opener URL'); data={opened:true}; }
@@ -211,7 +238,25 @@ try {
  });
  await panel.goto('http://127.0.0.1:'+server.address().port+'/local-cloud?token=local-fixture-token');
  await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
+ await panel.getByRole('button',{name:'帳號管理',exact:true}).click();
+ await panel.getByRole('region',{name:'待審核',exact:true}).getByRole('button',{name:'核准',exact:true}).click();
+ await panel.locator('#account-list .actions').filter({hasText:'本機待審同仁'}).getByRole('button',{name:'停用',exact:true}).waitFor();
+ assert.equal(await panel.locator('#account-list .actions').filter({hasText:'Kevin'}).getByRole('button').count(),0);
+ await panel.getByRole('button',{name:'關閉帳號管理',exact:true}).click();
  assert.equal(await panel.locator('#back').getAttribute('href'),'/?token=local-fixture-token','sandbox return link loses its local bearer');
+ localAccessStatus = 'disabled';
+ await panel.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await panel.getByRole('heading',{name:'帳號已停用',exact:true}).waitFor();
+ assert.equal(await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).count(),0,'local revoked account retains cached assets');
+ assert.equal(await panel.locator('#account-list').textContent(),'','local revoked admin list survives');
+ localAccessStatus = 'approved';
+ await panel.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
+ await panel.evaluate(()=>window.dispatchEvent(new Event('offline')));
+ await panel.getByRole('heading',{name:'請重新確認使用權限',exact:true}).waitFor();
+ assert.equal(await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).count(),0,'offline local panel retains cached assets');
+ await panel.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
  assert.equal(await panel.locator('#account-setup').isVisible(),true,'connected legacy identity has no account setup');
  await panel.getByLabel('設定帳號',{exact:true}).fill('Fixture_User');
  await panel.getByLabel('設定密碼',{exact:true}).fill('fixture-only-password');
@@ -279,6 +324,39 @@ try {
  assert.equal(actor,actorBeforeSetup,'setup error changed the existing identity');
  assert.equal(await panel.getByRole('button',{name:'登入雲端',exact:true}).isVisible(),true);
  assert.equal(await panel.getByLabel('密碼',{exact:true}).inputValue(),'');
+ await panel.getByLabel('帳號',{exact:true}).fill('fixture_user');
+ await panel.getByLabel('密碼',{exact:true}).fill('fixture-only-password');
+ await panel.getByRole('button',{name:'登入雲端',exact:true}).click();
+ await panel.getByRole('button',{name:'測試雲端資產 · agent · v1'}).waitFor();
+ await panel.getByRole('button',{name:'登出此裝置',exact:true}).click();
+ await panel.locator('#connect:not([hidden])').waitFor();
+ await panel.locator('#registration > summary').click();
+ await panel.getByLabel('姓名',{exact:true}).fill('新同仁 <img src=x onerror=alert(1)>');
+ await panel.getByLabel('註冊帳號',{exact:true}).fill('new_colleague');
+ await panel.getByLabel('註冊密碼',{exact:true}).fill('fixture-only-password');
+ await panel.getByLabel('確認註冊密碼',{exact:true}).fill('fixture-only-password');
+ const privateLocalBefore = localCalls.filter(x=>['assets','workspaces','local-agents'].includes(x)).length;
+ await panel.getByRole('button',{name:'送出註冊，等待核准',exact:true}).click();
+ await panel.getByRole('heading',{name:'等待 Kevin 核准',exact:true}).waitFor();
+ assert.equal(localCalls.filter(x=>['assets','workspaces','local-agents'].includes(x)).length,privateLocalBefore,'pending local registration loaded private resources');
+ assert.equal(await panel.getByLabel('註冊密碼',{exact:true}).inputValue(),'');
+ assert.equal(await panel.getByRole('button',{name:'帳號管理',exact:true}).isVisible(),false);
+ localAccessStatus='approved';
+ await panel.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await panel.locator('#account:not([hidden])').waitFor();
+ assert.equal(await panel.locator('#assets button').count(),0,'newly approved account inherited another identity assets');
+ actor='pending-device'; accountUsername=null; localAccessStatus='pending'; setupSessionUnavailable=false;
+ await panel.evaluate(()=>window.dispatchEvent(new Event('focus')));
+ await panel.getByRole('heading',{name:'等待 Kevin 核准',exact:true}).waitFor();
+ await panel.getByLabel('設定帳號',{exact:true}).fill('pending_colleague');
+ await panel.getByLabel('設定密碼',{exact:true}).fill('fixture-only-password');
+ await panel.getByLabel('再次輸入密碼',{exact:true}).fill('fixture-only-password');
+ const pendingLocalReads=localCalls.filter(x=>['assets','workspaces','local-agents'].includes(x)).length;
+ await panel.getByRole('button',{name:'儲存帳號密碼',exact:true}).click();
+ await panel.getByText('帳號密碼已設定，仍須等待 Kevin 管理員核准。原有雲端身分已保留。',{exact:true}).waitFor();
+ assert.equal(actor,'pending-device','pending local setup replaced original identity');
+ assert.equal(localCalls.filter(x=>['assets','workspaces','local-agents'].includes(x)).length,pendingLocalReads);
+ assert.equal(await panel.locator('#account-setup').isVisible(),false);
  await panel.close();
  const setupContext = await browser.newContext();
  const setupPage = await setupContext.newPage();
@@ -300,6 +378,60 @@ try {
  assert.equal(await setupPage.evaluate(()=>window.fixtureCalls.filter(x=>x==='setup').length),1,'portal setup automatically retried');
  assert.equal(await setupPage.getByLabel('密碼',{exact:true}).inputValue(),'');
  await setupContext.close();
+ const registrationContext = await browser.newContext();
+ const registration = await registrationContext.newPage();
+ registration.on('pageerror', error => errors.push(error.message));
+ await registration.goto('http://127.0.0.1:'+server.address().port);
+ await registration.getByRole('button',{name:'新同仁：註冊帳號',exact:true}).click();
+ await registration.getByLabel('姓名',{exact:true}).fill('新同仁 <img src=x onerror=alert(1)>');
+ await registration.getByLabel('註冊帳號',{exact:true}).fill('new_colleague');
+ await registration.getByLabel('註冊密碼',{exact:true}).fill('fixture-only-password');
+ await registration.getByLabel('確認註冊密碼',{exact:true}).fill('fixture-only-password');
+ await registration.getByRole('button',{name:'送出註冊，等待核准',exact:true}).click();
+ await registration.getByRole('heading',{name:'等待 Kevin 核准',exact:true}).waitFor();
+ assert.equal(await registration.evaluate(()=>window.fixtureCalls.filter(x=>['workspaces','list'].includes(x)).length),0,'pending portal registration loaded private resources');
+ assert.equal(await registration.locator('input[type=password]').count(),0,'registration password remains in waiting DOM');
+ assert.equal(await registration.getByRole('button',{name:'帳號管理',exact:true}).count(),0);
+ assert.equal(await registration.getByRole('button',{name:'＋ 建立／匯入',exact:true}).count(),0);
+ await registration.evaluate(()=>{window.fixtureAccess.status='approved'});
+ await registration.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await registration.getByRole('heading',{name:'我的 Agent',exact:true}).waitFor();
+ assert.equal(await registration.getByLabel('選擇工作空間').locator('option').count(),1,'approval automatically added a team');
+ await registration.evaluate(()=>{window.fixtureAssetRows=[{id:'private-fixture',workspace_id:null,kind:'agent',title:'撤權前的私人內容',revision:1,description:'fixture'}]; window.dispatchEvent(new Event('focus'));});
+ await registration.getByRole('heading',{name:'撤權前的私人內容',exact:true}).waitFor();
+ await registration.evaluate(()=>{window.fixtureAccess.status='disabled'; window.dispatchEvent(new Event('focus'));});
+ await registration.getByRole('heading',{name:'帳號已停用',exact:true}).waitFor();
+ assert.equal(await registration.getByText('撤權前的私人內容',{exact:true}).count(),0,'revoked portal account retains cached content');
+ await registration.evaluate(()=>{window.fixtureAccess.status='approved'});
+ await registration.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await registration.getByRole('heading',{name:'撤權前的私人內容',exact:true}).waitFor();
+ await registration.evaluate(()=>{window.fixtureOffline=true; window.dispatchEvent(new Event('offline'));});
+ await registration.getByRole('heading',{name:'請重新確認使用權限',exact:true}).waitFor();
+ assert.equal(await registration.getByText('撤權前的私人內容',{exact:true}).count(),0,'offline portal retains cached content');
+ await registration.getByRole('button',{name:'重新檢查狀態',exact:true}).click();
+ await registration.getByText('無法連上雲端，請確認網路後再試。',{exact:true}).waitFor();
+ assert.equal(await registration.getByRole('button',{name:'＋ 建立／匯入',exact:true}).count(),0,'network check failure reopened private content');
+ await registrationContext.close();
+ const invitedContext = await browser.newContext();
+ const invited = await invitedContext.newPage();
+ invited.on('pageerror', error => errors.push(error.message));
+ await invited.goto('http://127.0.0.1:'+server.address().port);
+ await invited.getByText('進階：使用裝置碼或團隊邀請碼',{exact:true}).click();
+ await invited.getByLabel('一次性裝置連線碼／團隊邀請碼').fill('fixture-pending-code');
+ await invited.getByRole('button',{name:'使用連線碼',exact:true}).click();
+ await invited.getByRole('heading',{name:'等待 Kevin 核准',exact:true}).waitFor();
+ await invited.getByRole('button',{name:'設定帳號密碼',exact:true}).first().click();
+ await invited.getByLabel('設定帳號',{exact:true}).fill('pending_colleague');
+ await invited.getByLabel('設定密碼',{exact:true}).fill('fixture-only-password');
+ await invited.getByLabel('再次輸入密碼',{exact:true}).fill('fixture-only-password');
+ await invited.getByRole('button',{name:'儲存帳號密碼',exact:true}).click();
+ await invited.getByText('帳號密碼已設定，仍須等待 Kevin 管理員核准。原有雲端身分已保留。',{exact:true}).waitFor();
+ assert.equal(await invited.evaluate(()=>JSON.parse(localStorage.getItem('vixo.cloud.session.v1')).user.id),'invited-user');
+ assert.equal(await invited.evaluate(()=>window.fixtureCalls.filter(x=>['workspaces','list'].includes(x)).length),0,'pending invite setup opened asset access');
+ assert.equal(await invited.getByRole('button',{name:'設定帳號密碼',exact:true}).count(),0);
+ await invitedContext.close();
+
+
  assert.deepEqual(errors,[]);
- console.log('Cloud browser checks passed: username/password login, existing-identity account setup, password clearing, device pairing, safe rendering, preview, edit, restore, team copy, invitation, device code, mobile, disconnect, cross-tab disconnect/re-pair, local-panel identity cleanup and delayed responses.');
+ console.log('Cloud browser checks passed: pending self-registration, admin approval/disable/restore, focus revocation and offline privacy, username/password login, existing-identity account setup, password clearing, device pairing, safe rendering, preview, edit, restore, team copy, invitation, device code, mobile, disconnect, cross-tab disconnect/re-pair, local-panel identity cleanup and delayed responses.');
 } finally { await browser?.close(); await new Promise(resolve=>server.close(resolve)); }

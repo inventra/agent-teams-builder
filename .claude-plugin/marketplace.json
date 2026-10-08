@@ -11,7 +11,7 @@
       "name": "agent-teams-builder",
       "source": "./plugins/agent-teams-builder",
       "description": "Cloud-synchronized VIXO Agents with confirmed SOPs, versioned Skills and team Workflows.",
-      "version": "1.10.0",
+      "version": "1.11.0",
       "category": "productivity"
     }
   ]

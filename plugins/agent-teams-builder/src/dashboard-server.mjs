@@ -421,7 +421,8 @@ export function cloudRecordVisible(record, userId = null) {
   return isCloud ? Boolean(userId && record?.cloud?.userId === userId) : !userId;
 }
 async function visibilityFilter() {
-  const userId = cloudConnected() ? (await cloudClient().getUser()).id : null;
+  let userId = null;
+  if (cloudConnected()) { const client = cloudClient(); userId = (await client.getUser()).id; await client.requireApproved(); }
   return (record) => cloudRecordVisible(record, userId);
 }
 function recentRuns(visibleRecord = () => true) {
@@ -562,14 +563,18 @@ export function createDashboardServer({ token = crypto.randomBytes(32).toString(
           const route = url.pathname.slice('/api/cloud/'.length);
           if (request.method === 'GET') {
             if (route === 'status') return send(response, 200, await cloudStatus());
+            if (route === 'access') return send(response, 200, await cloudClient().getAccess());
+            if (route === 'accounts') return send(response, 200, await cloudClient().listAccounts());
             if (route === 'assets') return send(response, 200, await cloudClient().listAssets());
             if (route === 'workspaces') return send(response, 200, await cloudClient().listWorkspaces());
-            if (route === 'local-agents') return send(response, 200, listAgents());
+            if (route === 'local-agents') { await cloudClient().requireApproved(); return send(response, 200, listAgents()); }
           }
           if (request.method === 'POST') {
             const input = await bodyJson(request);
             if (route === 'open-portal') return send(response, 200, await openCloudPortal());
             if (route === 'login') return send(response, 200, await cloudClient().signInWithPassword({ username: input.username, password: input.password }));
+            if (route === 'register') return send(response, 200, await cloudClient().registerAccount({ username: input.username, password: input.password, displayName: input.displayName }));
+            if (route === 'account-status') return send(response, 200, await cloudClient().setAccountStatus(input.userId, input.status));
             if (route === 'setup-account') return send(response, 200, await cloudClient().setupAccount({ username: input.username, password: input.password }));
             if (route === 'pair') return send(response, 200, await cloudClient().pairDevice(input.code));
             if (route === 'disconnect') return send(response, 200, await cloudClient().signOut());

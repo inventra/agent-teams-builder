@@ -1,6 +1,6 @@
 # VIXO 雲端資料與權限
 
-這裡提供 migration、SQL 回滾測試、裝置配對與帳號設定 Edge Functions。SQL 測試只使用交易內的虛構資料並回滾，不寄信。v1.10.0 以自訂帳號與密碼登入；既有使用者先在已連線的外掛設定一次，保留原 Auth UUID、私人資產與團隊權限。新同仁先兌換團隊邀請，再設定帳密；換機之後直接登入。
+這裡提供 migration、SQL 回滾測試、裝置配對、帳號設定與註冊 Edge Functions。SQL 測試只使用交易內的虛構資料並回滾，不寄信。v1.11.0 支援自行建立帳號密碼，經管理員核准後使用；既有使用者先在已連線的外掛設定一次，保留原 Auth UUID、私人資產與團隊權限。換機後直接登入，團隊共享仍依個別團隊的邀請與角色。
 
 依序套用 `migrations/202610080001_vixo_cloud.sql`、`migrations/202610080002_vixo_device_pairing.sql`、`migrations/202610080003_vixo_runtime_hardening.sql`、`migrations/202610080004_vixo_cas_http_conflict.sql`。使用具備建立 schema／function／policy 權限的 migration 身份；第二檔需要 Supabase 既有的 `auth.role()` 與 `service_role`。`vixo_private` 不加入 PostgREST exposed schemas；公開 API 在 `public`。第三檔是 forward migration：使用即時時鐘核對 capability 到期、限制 file 驗證成本，並在既有 `public.rls_auto_enable` 確實為 event-trigger function 時收回客戶端 EXECUTE，保留 event trigger。第四檔只將業務 CAS 衝突改用自訂 HTTP SQLSTATE `PT409`，保留鎖行、版本與 ACL。
 
@@ -8,7 +8,7 @@
 
 v1.10.0 另套用 `migrations/202610080005_vixo_account_binding.sql`，部署 `functions/vixo-account/index.ts` 與 `handler.mjs`。此端點自行透過 Auth `/user` 驗證 Bearer token，只能將同一個尚未設定帳號的裝置身分綁定一次，拒絕用戶傳入 user ID。005 的 service-only claim 會跨 Edge instances 鎖定同一 UUID 與帳號；成功或結果不確定時保留 claim，防止重新設定覆寫密碼。`vixo-device-pair` 保留供邀請與進階裝置連線。
 
-帳號為 3–32 個小寫 ASCII 字母、數字、底線或連字號，以字母開頭；以 `${username}@accounts.vixo.invalid` 作為 Auth 內部識別。密碼至少 12 個 Unicode 字元且最多 72 UTF-8 bytes，交由 Supabase Auth 雜湊儲存；應用程式只保存 session，不保存密碼。沒有公開註冊介面，也沒有寄信或 Email 重設密碼流程。005 的 `vixo_account_bind_claims` 不含密碼，僅 service role 可讀，客戶端不能直接讀寫或呼叫 claim RPC。
+帳號為 3–32 個小寫 ASCII 字母、數字、底線或連字號，以字母開頭；以 `${username}@accounts.vixo.invalid` 作為 Auth 內部識別。密碼至少 12 個 Unicode 字元且最多 72 UTF-8 bytes，交由 Supabase Auth 雜湊儲存；應用程式只保存 session，不保存密碼。v1.11.0 的公開註冊契約見下方；沒有寄信或 Email 重設密碼流程。005 的 `vixo_account_bind_claims` 不含密碼，僅 service role 可讀，客戶端不能直接讀寫或呼叫 claim RPC。
 
 - `vixo_workspaces`、`vixo_members`、`vixo_assets`、`vixo_asset_revisions` 只授 `authenticated` SELECT。所有客戶端寫入經 security definer RPC，固定空 `search_path` 並由 `auth.uid()` 取得身份；匿名不具有表格讀寫或 RPC 執行權限。
 - 私人資產僅 owner 可讀寫；團隊成員可讀，owner／editor 可儲存，viewer 無寫入權限。團隊權限依當下 membership，原建立者被移除也不能讀寫原團隊資產。membership 的私有 helper 避免遞迴 RLS。
@@ -46,3 +46,15 @@ psql -X -v ON_ERROR_STOP=1 -f supabase/tests/account-binding.sql
 ```
 
 `tests/local-bootstrap.sql` **只給一次性的本機 PostgreSQL cluster**，模擬 Supabase auth schema／角色與寬鬆的 public 預設授權。不能套用到 Supabase；在本機依序執行 bootstrap、五個 migrations、五份回滾測試。回滾測試都是純 SQL，可直接交給 SQL Editor 或 Supabase execute，保留 BEGIN／ROLLBACK 與全部斷言。
+
+## v1.11.0 自行註冊與管理員審核
+
+接著套用 `migrations/202610080006_vixo_account_approval.sql`，並部署 `functions/vixo-register/index.ts`、`handler.mjs` 與 `public-config.json`。原生公開 Auth signup 保持關閉；VIXO 的匿名註冊入口只建立待審核身分，不寄信、不允許選擇管理員或核准狀態。Auth INSERT trigger 及既有身分回填都使用 pending／非管理員；姓名只供顯示，不能決定權限。端點先驗證 `apikey` 與受信任的公開專案 key 或 runtime anon key 相符；缺少／錯誤 key 在配額與建立帳號前拒絕。這是專案客戶端識別，不是使用者授權。輪替公開 key 時，須同步 web 設定與 Edge `public-config.json` 並重新部署。
+
+`vixo_my_access()` 回傳本人狀態。`vixo_admin_list_accounts()` 與 `vixo_admin_set_account_status(p_user_id,p_status)` 依資料庫內 approved／is_admin 檢查管理權限，後者只接受 approved 或 disabled；無法修改管理員，也無法自行核准。變更保留不可覆寫的稽核紀錄。首次管理員由可信操作端核對原有 Auth UUID 後單獨設定，不能依使用者填入的 Kevin 名稱或 metadata 判定，實際 UUID 不納入 Git。
+
+四份資產／團隊 SELECT policies 額外 AND 目前帳號已核准；六個客戶端業務 RPC 先核對即時狀態。服務端配對與帳密綁定不會自動核准，停用身分不能透過配對／綁定恢復權限。核准不增加任何私人資產或團隊角色的可見性。
+
+註冊須經僅 service role 可呼叫的 `vixo_claim_registration_quota(p_ip_hash)`，使用資料庫時鐘與鎖定計數：全域每小時最多 50 次有效格式的嘗試；IP 的 HMAC 附加桶為每 15 分鐘 5 次。不假定轉送 header 一定可信；無 IP 或偽造 header 仍受全域限制。資料庫不保存明文 IP、密碼或服務金鑰。這是註冊容量限制，不宣稱完全防止拒絕服務攻擊。
+
+新增的 `tests/account-approval.sql` 與 `tests/registration-quota.sql` 都是 BEGIN／ROLLBACK 測試。舊五份 suites 應在 001–005 後執行；006 後的測試自行建立明確核准的合成 fixture，不能為了通過舊測試而放寬正式權限。

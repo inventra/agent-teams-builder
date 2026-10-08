@@ -1,6 +1,6 @@
 ---
 name: manage-agent-teams
-description: 查看 VIXO Agent Teams、檢查 Agent／Skill／Workflow、VIXO 帳密登入與設定、連接雲端、換裝置同步、發布本地訓練成果或分享給同仁，以及說明安裝與相容性時啟用。
+description: 查看 VIXO Agent Teams、檢查 Agent／Skill／Workflow、VIXO 帳密註冊與登入、查看帳號審核、連接雲端、換裝置同步、發布本地訓練成果或分享給同仁，以及說明安裝與相容性時啟用。
 ---
 
 # Agent Teams 管理與雲端同步
@@ -10,7 +10,8 @@ description: 查看 VIXO Agent Teams、檢查 Agent／Skill／Workflow、VIXO �
 - 先呼叫 `cloud_status` 確認本裝置來源。已連線時 Supabase 是正式資料來源；`agent_list`／`agent_get` 讀取有權限的雲端 Agent。`cloud_list` 另列出獨立 Skill 與 Workflow。雲端失敗不能自行改讀本地同名員工。
 - 未連線的舊安裝仍使用本地 Agent，預設位於使用者 `Downloads/Agent Teams/<english-name>/`。不要將「未連線」與「雲端目前無法連線」混為一談。
 - 開啟視覺管理頁：呼叫 `dashboard_open`。在「雲端同步」用 VIXO 帳號密碼登入；請使用者直接填表單，不在對話或工具參數中索取密碼。帳號為 3–32 個字元、英文起頭，只接受小寫英文字母、數字、`_` 與 `-`；密碼至少 12 個字元，UTF-8 編碼最多 72 bytes。
-- 既有已連線裝置尚未設定帳號：在「雲端同步」選「設定帳號密碼」。沿用目前 UUID、私人 Agent、版本與團隊權限，不另外建立空白帳號。首次使用的同仁先在進階入口以團隊邀請碼配對，再設定自己的帳號；沒有公開註冊。首台 bootstrap 由專案管理者建立，客戶端不能自行提升權限。
+- 新使用者可在網站或「雲端同步」自行註冊，填寫自訂帳號、密碼與顯示名稱。帳號先待審核，Kevin 核准後才可使用雲端資產與團隊功能；一般使用者不能自行指定管理員或核准狀態。註冊／登入成功不代表已核准，完全離線或舊快取不能越過審核。
+- 既有已連線裝置尚未設定帳號：在「雲端同步」選「設定帳號密碼」。沿用目前 UUID、私人 Agent、版本與團隊權限，不另外建立空白帳號。進階團隊邀請配對仍保留，但新身分仍須 Kevin 核准；bootstrap 由專案管理者建立，客戶端不能自行提升權限。
 - 自己換裝置：可直接以 VIXO 帳號密碼登入；使用者要求時也可呼叫 `cloud_create_device_code`。這是相同身分的一次性 10 分鐘換機碼，會取得同一份私人內容與團隊權限，只交給該使用者自己的裝置。
 - 分享給同仁：呼叫 `cloud_create_workspace` 建立團隊；owner 使用 `cloud_create_invite`，角色選 `viewer`（使用／複製）或 `editor`（另可更新團隊版本）。同仁透過邀請碼加入自己的身分；不能以換機碼代替團隊邀請。將碼交給使用者自行分享，不自動聯絡其他人。
 - 本地內容發布：呼叫 `cloud_preview_publish`，指定 `agent`、`kind`、必要的 `skillId`／`workflowId` 及目標 `workspaceId`。展示完整 SOP、檔案、依賴、流程與分享範圍；使用者明確確認該預覽後，才以 token 與確認原文呼叫 `agent_commit`。

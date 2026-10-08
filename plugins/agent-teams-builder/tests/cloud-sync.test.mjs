@@ -269,15 +269,17 @@ test("known permission denial survives a fresh sync client and blocks offline ca
   assert.equal((await independent.prepareAssetRun({ assetId: "asset-one", task: "整理", allowOfflineCache: true })).cloud.offline, true);
 });
 
-test("real shared client uses offline cache only with a previously verified unexpired account", async () => {
+test("real shared client requires current approval even for cached assets and blocks revoked or unavailable approval", async () => {
   const userId = "22222222-2222-4222-8222-222222222222", assetId = "11111111-1111-4111-8111-111111111111";
-  let offline = false, denied = false;
+  let offline = false, assetOffline = false, denied = false, approval = 'approved';
   let stored = { access_token: "test-access", refresh_token: "test-refresh", expires_at: Math.floor(Date.now() / 1000) + 3600 };
   const options = { url: "https://cloud.example.invalid", key: "sb_publishable_test", getSession: () => stored, saveSession: (value) => stored = value,
     fetchImpl: async (url) => {
       if (offline) throw new TypeError("fetch failed");
       const route = new URL(url).pathname;
       if (route === "/auth/v1/user") return Response.json({ id: userId, email: "test@example.invalid" });
+      if (route === '/rest/v1/rpc/vixo_my_access') return Response.json({ userId, status: approval, isAdmin: false });
+      if (assetOffline) throw new TypeError('fetch failed');
       if (route === "/rest/v1/vixo_assets") return denied ? Response.json({ message: "Access revoked" }, { status: 403 })
         : Response.json([{ id: assetId, kind: "agent", title: "Shared definition", revision: 1, bundle }]);
       return Response.json({ ok: true });
@@ -286,15 +288,22 @@ test("real shared client uses offline cache only with a previously verified unex
   const initial = await sync.pullAsset(assetId); assert.equal(initial.userId, userId);
   offline = true;
   await assert.rejects(sync.prepareAssetRun({ assetId, task: "整理" }), /無法連線/);
+  await assert.rejects(sync.prepareAssetRun({ assetId, task: '整理', allowOfflineCache: true }), { code: 'network_error' });
+  offline = false; assetOffline = true;
   const cached = await sync.prepareAssetRun({ assetId, task: "整理", allowOfflineCache: true });
   assert.equal(cached.cloud.userId, userId); assert.equal(cached.cloud.offline, true);
   const restarted = createCloudSync({ client: createCloudClient(options), cloudRoot: path.join(temporary, "real-client-cloud") });
   assert.equal((await restarted.prepareAssetRun({ assetId, task: "整理", allowOfflineCache: true })).cloud.offline, true);
-  offline = false; denied = true;
+  approval = 'disabled';
+  await assert.rejects(restarted.prepareAssetRun({ assetId, task: '整理', allowOfflineCache: true }), { code: 'account_disabled' });
+  approval = 'pending';
+  await assert.rejects(restarted.prepareAssetRun({ assetId, task: '整理', allowOfflineCache: true }), { code: 'account_pending' });
+  approval = 'approved'; assetOffline = false; denied = true;
   await assert.rejects(sync.pullAsset(assetId), /Access revoked/);
-  offline = true;
+  assetOffline = true;
   await assert.rejects(restarted.prepareAssetRun({ assetId, task: "整理", allowOfflineCache: true }), /access was revoked/);
   stored = { ...stored, expires_at: Math.floor(Date.now() / 1000) - 1 };
+  offline = true;
   const expired = createCloudSync({ client: createCloudClient(options), cloudRoot: path.join(temporary, "real-client-cloud") });
   await assert.rejects(expired.prepareAssetRun({ assetId, task: "整理", allowOfflineCache: true }), /無法連線/);
 });

@@ -16,6 +16,12 @@ export function validateAccountSetup(username, password, confirmation) {
 
 export function friendlyError(error) {
   const code = String(error?.code || '');
+  if (code === 'account_registration_unconfirmed') return '註冊結果待確認。請先用剛填寫的帳號密碼登入；若仍無法登入，請聯絡管理員，勿重複註冊。';
+  if (code === 'account_registered_session_unavailable') return '帳號已建立，請用剛註冊的帳號密碼登入。';
+  if (code === 'account_already_connected') return '此裝置已連線。請保留原身分設定帳號；若要建立新帳號，需先登出，且新帳號不會帶入原資料。';
+  if (code === 'account_pending') return '帳號正在等待 Kevin 管理員核准，核准後才能使用雲端內容。';
+  if (code === 'account_disabled') return '此帳號已停用，請聯絡 Kevin 管理員。';
+  if (code === 'admin_required') return '這項操作需要管理員權限。';
   if (['account_bind_in_progress', 'account_bind_unconfirmed'].includes(code)) return '帳號設定正在處理或結果待確認。請先用剛設定的帳號密碼登入；若仍無法登入，請聯絡管理員，勿重複設定。';
   if (code === 'account_bound_session_unavailable') return '帳號已設定，請用剛設定的帳號密碼登入';
   if (code === 'account_already_bound') return '目前身分已設定帳號密碼，請使用原有帳號登入。';
@@ -28,7 +34,7 @@ export function friendlyError(error) {
   if (/rate.limit|too.many/i.test(code + ' ' + error?.message)) return '操作次數較多，請稍候再試。';
   if (/expired|jwt|session|refresh_token/i.test(code) || error?.status === 401) return '登入已過期，請重新使用帳號密碼登入。';
   if (error?.status === 403 || /permission|row.level|42501/i.test(code + ' ' + error?.message)) return '目前裝置身分沒有這項操作的權限，請向團隊管理者確認。';
-  if (/failed to fetch|network|load failed/i.test(error?.message || '')) return '無法連上雲端，請確認網路後再試。';
+  if (code === 'network_error' || /failed to fetch|network|load failed/i.test(error?.message || '')) return '無法連上雲端，請確認網路後再試。';
   if (/^[\x20-\x7e\s]+$/.test(error?.message || '')) return '操作未完成，請稍後再試或確認輸入內容。' + (code ? `（${code}）` : '');
   return error?.message || '操作未完成，請稍後再試。';
 }
@@ -133,70 +139,87 @@ export function exportAsset(asset) {
 // The controller keeps preview and publication separate and discards stale responses
 // after account/workspace switches, so another user's content cannot remain visible.
 export function createCloudController(client, onChange = () => {}) {
-  const state = { user: null, workspaces: [], scope: null, assets: [], selected: null, revisions: [], preview: null };
-  let epoch = 0;
-  let selection = 0;
-  let publishing = false;
+  const state = { user: null, access: null, workspaces: [], scope: null, assets: [], selected: null, revisions: [], preview: null };
+  let epoch = 0, selection = 0, publishing = false;
   const changed = () => onChange(state);
+  const clearPrivate = () => { ++selection; Object.assign(state, { workspaces: [], scope: null, assets: [], selected: null, revisions: [], preview: null }); };
   const requireUser = () => { if (!state.user) throw new Error('請先連接此裝置，再管理雲端資產。'); };
-  async function loadAssets() {
-    requireUser();
-    const ticket = ++epoch;
-    const scope = state.scope;
-    const assets = await client.listAssets({ workspaceId: scope });
-    if (ticket === epoch && state.user) { state.assets = assets; changed(); }
+  const requireApproved = () => { requireUser(); if (state.access?.status !== 'approved') throw Object.assign(new Error('請先等候帳號核准，再管理雲端資產。'), { code: state.access?.status === 'disabled' ? 'account_disabled' : 'account_pending' }); };
+  async function accessAt(ticket) {
+    let access;
+    try { access = await client.getAccess(); }
+    catch (error) { if (ticket !== epoch) return false; ++epoch; state.access = null; clearPrivate(); changed(); throw error; }
+    if (ticket !== epoch || !state.user) return false;
+    if (access?.userId !== state.user.id || !['approved', 'pending', 'disabled'].includes(access.status)) {
+      ++epoch; state.access = null; clearPrivate(); changed(); throw new Error('無法確認目前帳號的使用權限，請重新登入。');
+    }
+    state.access = access;
+    if (access.status !== 'approved') { ++epoch; clearPrivate(); changed(); return false; }
+    return true;
+  }
+  async function loadApproved(ticket, scope = null) {
+    if (!await accessAt(ticket)) return;
+    const workspaces = await client.listWorkspaces();
+    if (ticket !== epoch || state.access?.status !== 'approved') return;
+    state.workspaces = workspaces;
+    state.scope = scope && workspaces.some(w => w.id === scope) ? scope : null;
+    const assets = await client.listAssets({ workspaceId: state.scope });
+    if (ticket !== epoch || state.access?.status !== 'approved') return;
+    state.assets = assets; changed();
   }
   return {
     state,
     async initialize() {
       const ticket = ++epoch;
+      clearPrivate(); state.access = null; state.user = null; changed();
       const user = await client.getUser();
-      if (ticket !== epoch) return false;
-      if (!user?.id) return false;
+      if (ticket !== epoch || !user?.id) return false;
       state.user = user;
-      const workspaces = await client.listWorkspaces();
-      if (ticket !== epoch) return false;
-      state.workspaces = workspaces;
-      changed();
-      await loadAssets();
-      return true;
+      await loadApproved(ticket);
+      return Boolean(state.user);
     },
-    async clear() {
-      ++epoch; ++selection;
-      Object.assign(state, { user: null, workspaces: [], scope: null, assets: [], selected: null, revisions: [], preview: null });
-      changed();
+    async clear() { ++epoch; clearPrivate(); state.user = null; state.access = null; changed(); },
+    suspend() { ++epoch; clearPrivate(); state.access = null; changed(); },
+    async refresh() {
+      requireUser(); const scope = state.scope; const ticket = ++epoch;
+      clearPrivate(); state.access = null; changed();
+      await loadApproved(ticket, scope);
     },
-    async refresh() { requireUser(); const ticket = epoch; const workspaces = await client.listWorkspaces(); if (ticket !== epoch || !state.user) return; state.workspaces = workspaces; if (state.scope && !workspaces.some(w => w.id === state.scope)) state.scope = null; state.selected = null; state.revisions = []; ++selection; changed(); await loadAssets(); },
+    async checkAccess() { requireUser(); return accessAt(epoch); },
     async chooseScope(scope) {
-      requireUser();
+      requireApproved();
       if (scope && !state.workspaces.some(w => w.id === scope)) throw new Error('這個團隊空間不存在或尚未加入。');
-      state.scope = scope || null; state.assets = []; state.selected = null; state.revisions = []; state.preview = null; ++selection; changed();
-      await loadAssets();
+      const workspaces = state.workspaces;
+      const ticket = ++epoch; clearPrivate(); state.workspaces = workspaces; state.scope = scope || null; changed();
+      if (!await accessAt(ticket)) return;
+      const assets = await client.listAssets({ workspaceId: state.scope });
+      if (ticket === epoch && state.access?.status === 'approved') { state.assets = assets; changed(); }
     },
     async selectAsset(id) {
-      requireUser();
-      const ticket = ++selection;
-      const account = epoch;
+      requireApproved();
+      const ticket = ++selection, account = epoch;
       state.selected = null; state.revisions = [];
+      if (!await accessAt(account) || ticket !== selection) return;
       const [asset, revisions] = await Promise.all([client.getAsset(id), client.listRevisions(id)]);
-      if (ticket !== selection || account !== epoch || !state.user) return;
+      if (ticket !== selection || account !== epoch || state.access?.status !== 'approved') return;
       state.selected = asset; state.revisions = revisions; changed();
     },
     back() { ++selection; state.selected = null; state.revisions = []; changed(); },
-    stage(input) { requireUser(); state.preview = preparePreview(input); return structuredClone(state.preview); },
+    stage(input) { requireApproved(); state.preview = preparePreview(input); return structuredClone(state.preview); },
     cancelPreview() { state.preview = null; },
     async publish() {
-      requireUser();
+      requireApproved();
       if (!state.preview) throw new Error('請先檢視完整內容，再確認發布。');
       if (publishing) throw new Error('正在發布，請稍候。');
-      const preview = structuredClone(state.preview);
-      const userId = state.user.id;
+      const preview = structuredClone(state.preview), account = epoch;
       publishing = true;
       try {
+        if (!await accessAt(account)) return null;
         const asset = await client.saveAsset(preview);
-        if (state.user?.id !== userId) return null;
+        if (account !== epoch || state.access?.status !== 'approved') return null;
         state.preview = null;
         await this.chooseScope(preview.workspaceId);
+        if (state.access?.status !== 'approved') return null;
         await this.selectAsset(asset.id);
         return asset;
       } finally { publishing = false; }
@@ -241,9 +264,30 @@ export async function boot() {
   let busy = false;
   let modalGeneration = 0;
   function announce(text, error = false) { notice.textContent = text; notice.hidden = !text; notice.classList.toggle('error', error); }
-  function showError(error) { announce(friendlyError(error), true); }
-  function closeModal() { ++modalGeneration; if (modal.open) modal.close(); controller?.cancelPreview(); }
-  modal.addEventListener('cancel', () => { ++modalGeneration; controller?.cancelPreview(); });
+  function handleFailure(error) {
+    if (controller?.state.user && ['account_pending', 'account_disabled', 'network_error', 'access_unconfirmed'].includes(error?.code)) {
+      controller.suspend();
+      if (['account_pending', 'account_disabled'].includes(error.code)) controller.state.access = { userId: controller.state.user.id, status: error.code === 'account_disabled' ? 'disabled' : 'pending', isAdmin: false };
+      closeModal(); renderApp();
+    }
+    if (error?.code === 'admin_required' && controller?.state.access) { controller.state.access.isAdmin = false; closeModal(); renderApp(); }
+    return friendlyError(error);
+  }
+  function showError(error) { announce(handleFailure(error), true); }
+  async function signOut() {
+    announce(''); await controller.clear(); closeModal();
+    try { await client.signOut(); }
+    finally { stored = null; try { localStorage.removeItem(SESSION_KEY); } catch {} renderAuth(); announce('已登出此裝置。'); }
+  }
+  async function recheckAccess() {
+    if (!controller?.state.user || busy) return;
+    closeModal();
+    try { await controller.refresh(); renderApp(); }
+    catch (error) { renderApp(); showError(error); }
+  }
+
+  function closeModal() { ++modalGeneration; if (modal.open) modal.close(); modal.replaceChildren(); controller?.cancelPreview(); }
+  modal.addEventListener('cancel', () => { ++modalGeneration; modal.replaceChildren(); controller?.cancelPreview(); });
   async function attempt(action) { try { await action(); } catch (error) { showError(error); } }
   function showModal(title, body, actions = []) {
     ++modalGeneration;
@@ -275,7 +319,7 @@ export async function boot() {
       busy = true; submit.disabled = true; status.textContent = ''; announce('');
       try {
         await client.signInWithPassword(credentials);
-        if (await controller.initialize()) { renderApp(); announce('已登入，原有雲端內容已載入。'); }
+        if (await controller.initialize()) { renderApp(); if (controller.state.access?.status === 'approved') announce('已登入，原有雲端內容已載入。'); }
         else throw new Error('尚未完成登入，請重新確認帳號密碼。');
       } catch (error) { status.textContent = friendlyError(error); }
       finally { busy = false; submit.disabled = false; }
@@ -290,18 +334,84 @@ export async function boot() {
       busy = true; pairSubmit.disabled = true; pairStatus.textContent = '';
       try {
         await client.pairDevice(value);
-        if (await controller.initialize()) { renderApp(); announce('已連接原有雲端身分。可設定帳號密碼，之後直接登入。'); }
+        if (await controller.initialize()) { renderApp(); if (controller.state.access?.status === 'approved') announce('已連接原有雲端身分。可設定帳號密碼，之後直接登入。'); }
         else throw new Error('尚未完成裝置連線，請重新確認連線碼。');
       } catch (error) { pairStatus.textContent = friendlyError(error); }
       finally { busy = false; pairSubmit.disabled = false; }
     } }, [field('一次性裝置連線碼／團隊邀請碼', pairing), pairStatus, pairSubmit]);
-    main.replaceChildren(element('div', { class: 'auth-layout' }, [element('section', { class: 'auth-intro' }, [element('span', { class: 'eyebrow', text: 'Your team. Everywhere.' }), element('h1', {}, ['你的 Agent，', element('br'), '走到哪都在。']), element('p', { text: '使用同一組帳號密碼，接續你的角色、技能與工作流程，也把累積的經驗分享給團隊。' }), element('div', { class: 'hero-labels' }, [element('span', { text: '↗ 跨裝置同步' }), element('span', { text: '◇ 團隊共享' }), element('span', { text: '↺ 版本保留' })])]), element('section', { class: 'auth-card', 'aria-label': '帳號登入' }, [element('h2', { text: '登入 VIXO' }), element('p', { class: 'muted small-text', text: '輸入你在 VIXO 設定的帳號密碼。' }), form, element('div', { class: 'first-account-note' }, [element('strong', { text: '第一次使用帳號登入？' }), element('p', { text: '請先回到已連線、保有原本 Agent 的 VIXO 外掛，在「雲端連線」設定帳號密碼，再回到這裡登入。原有資產與團隊權限會保留。' })]), element('p', { class: 'help-text', text: '忘記密碼時，請向管理員確認恢復方式，並保留仍可使用的已連線裝置。' }), element('details', { class: 'advanced-auth' }, [element('summary', { text: '進階：使用裝置碼或團隊邀請碼' }), element('p', { class: 'help-text', text: '既有裝置換機碼沿用同一身分；受邀同仁可用團隊邀請碼加入，再為自己的身分設定帳號密碼。' }), pairForm]), element('p', { class: 'help-text', text: '雲端保存與分享資產；ERP 與裝置操作，仍由具備環境的本地 VIXO 執行。' })]) ]));
+    main.replaceChildren(element('div', { class: 'auth-layout' }, [element('section', { class: 'auth-intro' }, [element('span', { class: 'eyebrow', text: 'Your team. Everywhere.' }), element('h1', {}, ['你的 Agent，', element('br'), '走到哪都在。']), element('p', { text: '使用同一組帳號密碼，接續你的角色、技能與工作流程，也把累積的經驗分享給團隊。' }), element('div', { class: 'hero-labels' }, [element('span', { text: '↗ 跨裝置同步' }), element('span', { text: '◇ 團隊共享' }), element('span', { text: '↺ 版本保留' })])]), element('section', { class: 'auth-card', 'aria-label': '帳號登入' }, [element('h2', { text: '登入 VIXO' }), element('p', { class: 'muted small-text', text: '輸入你在 VIXO 設定的帳號密碼。' }), form, button('新同仁：註冊帳號', renderRegistration, 'register-link'), element('div', { class: 'first-account-note' }, [element('strong', { text: '已經在 VIXO 保存過 Agent？' }), element('p', { text: '請先回到已連線、保有原本 Agent 的 VIXO 外掛，在「雲端連線」設定帳號密碼，再回到這裡登入。原有資產與團隊權限會保留。' })]), element('p', { class: 'help-text', text: '忘記密碼時，請向管理員確認恢復方式，並保留仍可使用的已連線裝置。' }), element('details', { class: 'advanced-auth' }, [element('summary', { text: '進階：使用裝置碼或團隊邀請碼' }), element('p', { class: 'help-text', text: '既有裝置換機碼沿用同一身分；受邀同仁可用團隊邀請碼加入，再為自己的身分設定帳號密碼。' }), pairForm]), element('p', { class: 'help-text', text: '雲端保存與分享資產；ERP 與裝置操作，仍由具備環境的本地 VIXO 執行。' })]) ]));
+  }
+
+  function renderRegistration() {
+    if (controller.state.user || stored?.access_token) { renderApp(); return; }
+    const name = element('input', { id: 'register-name', type: 'text', required: true, maxLength: 80, autocomplete: 'name' });
+    const username = element('input', { id: 'register-account', type: 'text', required: true, minLength: 3, maxLength: 32, autocomplete: 'username', autocapitalize: 'none', spellcheck: false });
+    const password = element('input', { id: 'register-password', type: 'password', required: true, minLength: 12, maxLength: 72, autocomplete: 'new-password' });
+    const confirm = element('input', { id: 'register-confirm', type: 'password', required: true, minLength: 12, maxLength: 72, autocomplete: 'new-password' });
+    const error = element('p', { class: 'inline-error', role: 'alert' });
+    const submit = element('button', { type: 'submit', class: 'primary', text: '送出註冊，等待核准' });
+    const form = element('form', { onsubmit: async event => {
+      event.preventDefault(); if (busy) return;
+      let input;
+      try {
+        input = { ...validateAccountSetup(username.value, password.value, confirm.value), displayName: name.value.trim() };
+        if (!input.displayName || [...input.displayName].length > 80) throw new Error('請填寫 1–80 個字元的姓名，方便管理員確認身分。');
+      } catch (failure) { error.textContent = friendlyError(failure); return; }
+      password.value = ''; confirm.value = ''; busy = true; submit.disabled = true; error.textContent = '';
+      try { await client.registerAccount(input); await controller.initialize(); renderApp(); }
+      catch (failure) {
+        if (['account_registration_unconfirmed', 'account_registered_session_unavailable'].includes(failure.code)) { renderAuth(); announce(friendlyError(failure)); }
+        else error.textContent = handleFailure(failure);
+      } finally { busy = false; submit.disabled = false; }
+    } }, [field('姓名', name), field('註冊帳號', username, '3–32 個小寫英文、數字、_ 或 -，以英文字母開頭。'), field('註冊密碼', password, '至少 12 個字元，建議使用英文字母、數字與符號。'), field('確認註冊密碼', confirm), error, submit]);
+    main.replaceChildren(element('section', { class: 'auth-card registration-card' }, [element('h1', { text: '新同仁註冊' }), element('p', { class: 'small-text muted', text: '建立帳號後，需等 Kevin 管理員核准才能使用雲端。' }), element('p', { class: 'first-account-note', text: '已有 Agent 的舊裝置請先設定原身分的帳號密碼。新註冊的帳號不會帶入原本資料。' }), form, button('返回登入', renderAuth, 'quiet')]));
+  }
+  async function openAccountAdmin() {
+    if (!await controller.checkAccess() || !controller.state.access?.isAdmin) return;
+    const generation = modalGeneration;
+    const rows = await client.listAccounts();
+    if (generation !== modalGeneration || !controller.state.access?.isAdmin || controller.state.access.status !== 'approved') return;
+    const body = element('div', { class: 'account-admin' }, [element('p', { class: 'help-text', text: '核准只開放雲端使用資格。團隊權限由各團隊另外邀請；管理員帳號不能在此停用。' })]);
+    for (const [status, title] of [['pending', '待審核'], ['approved', '已核准'], ['disabled', '已停用']]) {
+      const section = element('section', { class: 'account-group', 'aria-label': title }, [element('h3', { text: title })]);
+      const accounts = rows.filter(row => row.status === status);
+      if (!accounts.length) section.append(element('p', { class: 'help-text', text: '目前沒有帳號。' }));
+      for (const row of accounts) {
+        const rowNode = element('div', { class: 'account-row' }, [element('div', {}, [element('strong', { text: row.displayName || row.username || (row.isAdmin ? 'Kevin 管理員' : '尚未設定帳號') }), element('p', { class: 'help-text', text: `${row.username || '既有裝置身分'} · ${dateText(row.createdAt)}` })])]);
+        if (row.isAdmin) rowNode.append(element('span', { class: 'tag', text: '管理員' }));
+        else {
+          const actions = element('div', { class: 'account-row-actions' });
+          for (const desired of status === 'pending' ? ['approved', 'disabled'] : [status === 'approved' ? 'disabled' : 'approved']) {
+            const control = button(desired === 'disabled' ? '停用' : status === 'pending' ? '核准' : '恢復', () => attempt(async () => {
+              control.disabled = true;
+              try {
+                if (!await controller.checkAccess() || !controller.state.access?.isAdmin) { closeModal(); renderApp(); return; }
+                await client.setAccountStatus(row.userId, desired);
+                closeModal(); await openAccountAdmin(); announce(desired === 'approved' ? '帳號已核准，可使用雲端。團隊權限需另外邀請。' : '帳號已停用。');
+              } finally { control.disabled = false; }
+            }), desired === 'disabled' ? 'danger small' : 'primary small');
+            actions.append(control);
+          }
+          rowNode.append(actions);
+        }
+        section.append(rowNode);
+      }
+      body.append(section);
+    }
+    showModal('帳號管理', body, [button('完成', closeModal)]);
   }
 
   function renderApp() {
     if (!controller.state.user) { renderAuth(); return; }
     const state = controller.state;
-    account.replaceChildren(element('span', { class: 'email', text: state.user.username || '已連線的 VIXO 裝置' }), ...(!state.user.accountConfigured ? [button('設定帳號密碼', openSetupAccount, 'small')] : []), button('登出此裝置', () => attempt(async () => { await controller.clear(); closeModal(); try { await client.signOut(); } finally { stored = null; try { localStorage.removeItem(SESSION_KEY); } catch {} renderAuth(); announce('已登出此裝置。'); } }), 'quiet small'));
+    account.replaceChildren(element('span', { class: 'email', text: state.user.username || (state.access?.isAdmin ? 'Kevin 管理員' : '已連線的 VIXO 裝置') }), ...(['approved', 'pending'].includes(state.access?.status) && !state.user.accountConfigured ? [button('設定帳號密碼', openSetupAccount, 'small')] : []), ...(state.access?.status === 'approved' && state.access?.isAdmin ? [button('帳號管理', () => attempt(openAccountAdmin), 'small')] : []), button('登出此裝置', () => attempt(signOut), 'quiet small'));
+    if (state.access?.status !== 'approved') {
+      const status = state.access?.status;
+      const title = status === 'pending' ? '等待 Kevin 核准' : status === 'disabled' ? '帳號已停用' : '請重新確認使用權限';
+      const message = status === 'pending' ? (state.user.accountConfigured ? '註冊已完成。Kevin 管理員核准後，就能使用雲端 Agent、Skill 與 Workflow。' : '已連接雲端身分。請先設定帳號密碼，方便 Kevin 管理員辨識；核准後才能使用雲端內容。') : status === 'disabled' ? '這個帳號目前無法使用雲端內容，請聯絡 Kevin 管理員。' : '目前尚未確認帳號權限。連線恢復後，請重新檢查。';
+      main.replaceChildren(element('section', { class: 'standalone-message access-state' }, [element('span', { class: 'eyebrow', text: 'VIXO Account' }), element('h1', { text: title }), element('p', { text: message }), status === 'pending' && !state.user.accountConfigured ? button('設定帳號密碼', openSetupAccount, 'primary') : null, element('p', { class: 'help-text', text: '帳號核准不會自動加入團隊，也不會開放其他人的私人資料。團隊分享需另外邀請。' }), button('重新檢查狀態', () => attempt(recheckAccess), 'primary')]));
+      return;
+    }
     const scope = scopeSelect('workspace-select');
     scope.className = 'workspace-select'; scope.setAttribute('aria-label', '選擇工作空間');
     scope.addEventListener('change', () => attempt(async () => { closeModal(); await controller.chooseScope(scope.value); renderApp(); }));
@@ -338,7 +448,7 @@ export async function boot() {
       }
     }
     searchInput.addEventListener('input', () => { search = searchInput.value; updateGrid(); });
-    container.append(element('div', { class: 'page-heading' }, [element('div', {}, [element('h1', { text: TYPES[kind].plural }), element('p', { text: TYPES[kind].description })]), element('div', { class: 'heading-actions' }, [button('重新整理', () => attempt(async () => { await controller.refresh(); renderApp(); announce('已載入雲端最新內容。'); })), button('＋ 建立／匯入', () => openEditor(), 'primary')])]), element('div', { class: 'context-strip' }, [element('span', { text: state.scope ? `目前位於「${scopeName(state.scope)}」，這裡的資產由團隊共同使用。` : '你的私人收藏。選擇「複製到空間」，即可分享給團隊。' }), element('span', { class: 'tag', text: state.scope ? '團隊空間' : '僅自己可見' })]), element('div', { class: 'toolbar' }, [searchInput, count]), grid);
+    container.append(element('div', { class: 'page-heading' }, [element('div', {}, [element('h1', { text: TYPES[kind].plural }), element('p', { text: TYPES[kind].description })]), element('div', { class: 'heading-actions' }, [button('重新整理', () => attempt(async () => { await controller.refresh(); renderApp(); if (controller.state.access?.status === 'approved') announce('已載入雲端最新內容。'); })), button('＋ 建立／匯入', () => openEditor(), 'primary')])]), element('div', { class: 'context-strip' }, [element('span', { text: state.scope ? `目前位於「${scopeName(state.scope)}」，這裡的資產由團隊共同使用。` : '你的私人收藏。選擇「複製到空間」，即可分享給團隊。' }), element('span', { class: 'tag', text: state.scope ? '團隊空間' : '僅自己可見' })]), element('div', { class: 'toolbar' }, [searchInput, count]), grid);
     updateGrid();
   }
 
@@ -402,7 +512,7 @@ export async function boot() {
         if (editing && imported.kind !== asset.kind) throw new Error('更新版本必須與目前資產類型相同。');
         type.value = imported.kind; if (imported.title) title.value = imported.title; if (!editing && imported.slug) slug.value = imported.slug;
         description.value = imported.description; json.value = JSON.stringify(imported.bundle, null, 2); error.textContent = '';
-      } catch (failure) { error.textContent = friendlyError(failure); }
+      } catch (failure) { error.textContent = handleFailure(failure); }
       finally { file.value = ''; }
     });
     const next = button('預覽完整內容 →', () => {
@@ -411,7 +521,7 @@ export async function boot() {
         const imported = parseImport(json.value);
         const preview = controller.stage({ ...(editing ? { id: asset.id, expectedRevision: asset.revision } : {}), kind: type.value, title: title.value, slug: slug.value, description: description.value, bundle: imported.bundle, workspaceId: scope.value || null, message: message.value });
         showPublishPreview(preview, () => openEditor(asset, copy, { ...preview, workspace_id: preview.workspaceId }));
-      } catch (failure) { error.textContent = friendlyError(failure); error.scrollIntoView({ block: 'nearest' }); }
+      } catch (failure) { error.textContent = handleFailure(failure); error.scrollIntoView({ block: 'nearest' }); }
     }, 'primary');
     showModal(editing ? `編輯 ${asset.title} 的新版本` : copy ? '複製資產到另一個空間' : `建立／匯入 ${TYPES[kind].label}`, [element('div', { class: 'upload-zone' }, [element('span', { text: '已有本地資產？匯入 VIXO 匯出的 JSON。' }), button('選擇檔案', () => file.click(), 'small'), file]), element('div', { class: 'field-grid' }, [field('資產類型', type), field('發布位置', scope), field('顯示名稱', title), field('識別名稱', slug, '小寫英文、數字、- 或 _；同一空間內不得重複。')]), field('簡短說明', description), field('版本說明', message), field('完整資產 JSON', json, '建立前請完成範本內的內容。變更資產類型會換成該類型的新範本。'), element('p', { class: 'editor-note', text: 'spec 保存設定與完整 SOP；files 保存 Skill 或流程需要的文字檔案。請檢查個人記憶、對話、業務資料與密鑰，確認內容適合目前的分享範圍。' }), error], [button('取消', closeModal), next]);
   }
@@ -425,7 +535,7 @@ export async function boot() {
       publish.disabled = true; error.textContent = '';
       const generation = modalGeneration;
       try { const saved = await controller.publish(); if (generation !== modalGeneration) return; closeModal(); if (saved) { kind = saved.kind; detailTab = 'content'; renderApp(); announce(`「${saved.title}」v${saved.revision} 已發布到${scopeName(saved.workspace_id)}。`); } }
-      catch (failure) { error.textContent = friendlyError(failure); publish.disabled = false; }
+      catch (failure) { error.textContent = handleFailure(failure); publish.disabled = false; }
     }, 'primary');
     publish.disabled = true;
     check.addEventListener('change', () => { publish.disabled = !check.checked; });
@@ -452,7 +562,7 @@ export async function boot() {
       submit.disabled = true; error.textContent = '';
       const generation = modalGeneration;
       try { const result = await action(); if (generation !== modalGeneration) return; if (result !== false) closeModal(); }
-      catch (failure) { error.textContent = friendlyError(failure); }
+      catch (failure) { error.textContent = handleFailure(failure); }
       finally { submit.disabled = false; }
     }, 'primary');
     showModal(title, [...fields.map(item => field(item.label, item.control, item.help)), error], [button('取消', closeModal), submit]);
@@ -484,11 +594,12 @@ export async function boot() {
       if (started !== modalGeneration) return false;
       if (user?.id !== originalUserId || controller.state.user?.id !== originalUserId) throw new Error('雲端身分已變更，請重新整理後確認。');
       controller.state.user = user;
-      renderApp(); announce('帳號密碼已設定，原有資產與權限已保留。之後可直接使用帳號密碼登入。');
+      renderApp(); announce(controller.state.access?.status === 'pending' ? '帳號密碼已設定，仍須等待 Kevin 管理員核准。原有雲端身分已保留。' : '帳號密碼已設定，原有資產與權限已保留。之後可直接使用帳號密碼登入。');
     });
   }
   async function openDeviceCode() {
     const userId = controller.state.user?.id;
+    if (!await controller.checkAccess()) return;
     const result = await client.createDeviceCode();
     if (!userId || controller.state.user?.id !== userId) return;
     const value = result?.code;
@@ -498,16 +609,17 @@ export async function boot() {
   }
   function openCreateWorkspace() {
     const name = element('input', { id: 'workspace-name', required: true, maxLength: 100, placeholder: '例如：營運團隊' });
-    simpleForm('建立團隊空間', [{ label: '團隊名稱', control: name, help: '你會成為這個空間的擁有者，之後可產生邀請碼讓同仁加入。' }], '建立空間', async () => { const workspace = await client.createWorkspace(name.value.trim()); await controller.refresh(); await controller.chooseScope(workspace.id); renderApp(); announce(`已建立「${workspace.name}」。`); });
+    simpleForm('建立團隊空間', [{ label: '團隊名稱', control: name, help: '你會成為這個空間的擁有者，之後可產生邀請碼讓同仁加入。' }], '建立空間', async () => { if (!await controller.checkAccess()) return false; const workspace = await client.createWorkspace(name.value.trim()); await controller.refresh(); await controller.chooseScope(workspace.id); renderApp(); announce(`已建立「${workspace.name}」。`); });
   }
   function openJoinWorkspace() {
     const invite = element('input', { id: 'invite-code', required: true, placeholder: '貼上管理者提供的邀請碼', autocomplete: 'off', maxLength: 200 });
-    simpleForm('加入團隊空間', [{ label: '邀請碼', control: invite, help: '加入後，即可使用這個空間中開放給團隊的資產。' }], '加入團隊', async () => { const joined = await client.joinWorkspace(invite.value.trim()); await controller.refresh(); const id = joined?.workspace_id || joined?.workspaceId || joined?.id; if (id && controller.state.workspaces.some(w => w.id === id)) await controller.chooseScope(id); renderApp(); announce('已加入團隊，工作空間清單已更新。'); });
+    simpleForm('加入團隊空間', [{ label: '邀請碼', control: invite, help: '加入後，即可使用這個空間中開放給團隊的資產。' }], '加入團隊', async () => { if (!await controller.checkAccess()) return false; const joined = await client.joinWorkspace(invite.value.trim()); await controller.refresh(); const id = joined?.workspace_id || joined?.workspaceId || joined?.id; if (id && controller.state.workspaces.some(w => w.id === id)) await controller.chooseScope(id); renderApp(); announce('已加入團隊，工作空間清單已更新。'); });
   }
   async function openMembers() {
     const workspaceId = controller.state.scope;
     if (!workspaceId) return;
     const workspace = controller.state.workspaces.find(w => w.id === workspaceId);
+    if (!await controller.checkAccess()) return;
     const members = await client.listMembers(workspaceId);
     if (controller.state.scope !== workspaceId || !controller.state.user) return;
     const current = members.find(m => m.user_id === controller.state.user.id);
@@ -516,13 +628,14 @@ export async function boot() {
     for (const member of members) body.append(element('div', { class: 'member-row' }, [element('div', {}, [element('strong', { text: member.email || (member.user_id === controller.state.user.id ? '你' : member.user_id) }), element('div', { class: 'help-text', text: ({ owner: '擁有者', admin: '管理者', editor: '可編輯', viewer: '可檢視', member: '成員' })[member.role] || member.role })]), canManage && member.role !== 'owner' && member.user_id !== workspace?.owner_id && member.user_id !== controller.state.user.id ? button('移除', () => {
       const removal = element('p', { class: 'small-text', text: '移除後，這位成員將無法存取此團隊空間。確認移除這個成員？' });
       const error = element('p', { class: 'inline-error', role: 'alert' });
-      const confirm = button('確認移除', async () => { confirm.disabled = true; try { await client.removeMember(workspaceId, member.user_id); closeModal(); await openMembers(); announce('已移除成員。'); } catch (failure) { error.textContent = friendlyError(failure); confirm.disabled = false; } }, 'danger');
+      const confirm = button('確認移除', async () => { confirm.disabled = true; try { if (!await controller.checkAccess()) return; await client.removeMember(workspaceId, member.user_id); closeModal(); await openMembers(); announce('已移除成員。'); } catch (failure) { error.textContent = handleFailure(failure); confirm.disabled = false; } }, 'danger');
       showModal('移除團隊成員', [removal, element('p', { class: 'help-text', text: member.email || member.user_id }), error], [button('取消', () => attempt(openMembers)), confirm]);
     }, 'danger small') : null]));
     const actions = [button('完成', closeModal)];
     if (canManage) actions.unshift(button('產生邀請碼', () => {
       const role = element('select', { id: 'invite-role' }, [element('option', { value: 'viewer', text: '可檢視與下載' }), element('option', { value: 'editor', text: '可檢視與編輯' })]);
       simpleForm('邀請同仁加入', [{ label: '授予權限', control: role }], '產生邀請碼', async () => {
+        if (!await controller.checkAccess()) return false;
         const result = await client.createInvite(workspaceId, role.value);
         const codeValue = result?.code || result?.invite_code || (typeof result === 'string' ? result : '');
         if (!codeValue) throw new Error('沒有取得邀請碼，請重新操作。');
@@ -544,7 +657,13 @@ export async function boot() {
     const { createCloudClient } = await import('./cloud-client.mjs');
     try { stored = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch {}
     client = createCloudClient({ url, key, getSession: () => { try { return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null'); } catch { return stored; } }, saveSession: session => { stored = session; try { if (session) localStorage.setItem(SESSION_KEY, JSON.stringify(session)); else localStorage.removeItem(SESSION_KEY); } catch {} } });
-    controller = createCloudController(client);
+    controller = createCloudController(client, state => {
+      if (state.user && state.access?.status !== 'approved') { announce(''); closeModal(); renderApp(); }
+    });
+    window.addEventListener('focus', recheckAccess);
+    window.addEventListener('online', recheckAccess);
+    window.addEventListener('offline', () => { if (controller.state.user) { closeModal(); controller.suspend(); renderApp(); announce('目前無法連線，已隱藏雲端內容。請連線後重新檢查帳號權限。'); } });
+
     window.addEventListener('storage', event => {
       if (event.key !== SESSION_KEY && event.key !== null) return;
       let next = null;
@@ -553,7 +672,7 @@ export async function boot() {
       // Reload only for real session changes; this also rebuilds the client's storage
       // fingerprint before a new one-time device code can be redeemed.
       if (!sessionCredentialsChanged(stored, next)) { stored = next; return; }
-      closeModal(); stored = next; controller.clear(); account.replaceChildren();
+      announce(''); closeModal(); stored = next; controller.clear(); account.replaceChildren();
       main.replaceChildren(element('div', { class: 'loading-state', text: '裝置連線已變更，正在重新載入工作室…' }));
       location.reload();
     });

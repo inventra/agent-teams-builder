@@ -2,17 +2,19 @@
 
 把 Claude Code 或 Codex Session 裡完成過的流程整理成 Agent。連接雲端後，以 Supabase 儲存的版本為準，支援換裝置同步、團隊分享 Agent／Skill／Workflow、衝突保留與版本回復；執行仍由目前的 Codex／Claude 宿主完成。
 
-## v1.10.0：帳號密碼登入與雲端同步
+## v1.11.0：帳號註冊與 Kevin 審核
 
 在外掛 Dashboard 按「雲端同步」，用 VIXO 帳號密碼登入。原本已連線的裝置先選「設定帳號密碼」，會綁定原有身分並保留 Agent、版本與團隊權限。帳號為英文起頭的 3–32 個字元，只接受小寫英文字母、數字、`_` 與 `-`；密碼至少 12 個字元。
 
-目前沒有公開註冊。同仁第一次使用，先以團隊邀請碼配對，再設定自己的帳號；自己的換機碼保留在進階連線入口，不能代替同仁邀請碼。忘記密碼請聯絡管理員；不要求 M365 或 SMTP，尚未提供寄信重設密碼。既有員工可完整預覽後上傳；連線後新增或修改 Agent 直接儲存雲端，並保留完整 SOP 確認流程。
+新使用者可在網站或外掛填寫自訂帳號、密碼與顯示名稱註冊。新帳號一律「待審核」；可以登入查看狀態，Kevin 核准後才能使用雲端 Agent、Skill、Workflow 與團隊功能。註冊成功不代表已獲核准；遭停用的帳號也不能繼續使用雲端快取。既有使用者沿用原本 UUID、Agent 與團隊權限，不需另註冊。
+
+自己的換機碼保留在進階連線入口，不能代替同仁邀請碼；團隊邀請不會跳過帳號審核。忘記密碼請聯絡管理員；不要求 M365 或 SMTP，尚未提供寄信重設密碼。核准後，既有員工可完整預覽後上傳；連線後新增或修改 Agent 直接儲存雲端，並保留完整 SOP 確認流程。
 
 [雲端管理中心](https://inventra.github.io/agent-teams-builder/) · [使用與管理說明](docs/CLOUD-AGENT-TEAMS.md)
 
 ## 一鍵安裝
 
-請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.10.0.zip`，解壓縮後：
+請從 [GitHub Releases](https://github.com/inventra/agent-teams-builder/releases/latest) 下載 `Agent-Teams-Builder-v1.11.0.zip`，解壓縮後：
 
 - macOS：雙擊 `Install Agent Teams Builder.app` 或 `install.command`；若首次被系統阻擋，請右鍵選「打開」。
 - Windows：雙擊 `Install-Agent-Builder.exe`；也可執行 `.cmd` 或 PowerShell 版。

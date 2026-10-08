@@ -29,7 +29,10 @@ export function cloudClient(options = {}) {
 export function cloudSync(client = cloudClient()) { return createCloudSync({ client, cloudRoot: cloudRoot() }); }
 export async function cloudStatus() {
   const connected = cloudConnected();
-  return { connected, source: connected ? 'cloud' : 'local', portalUrl: config.portalUrl, user: connected ? await cloudClient().getUser() : null };
+  if (!connected) return { connected: false, source: 'local', portalUrl: config.portalUrl, user: null, access: null };
+  const client = cloudClient();
+  const user = await client.getUser();
+  return { connected: true, source: 'cloud', portalUrl: config.portalUrl, user, access: await client.getAccess() };
 }
 function parseReference(reference) {
   const match = /^cloud:([a-f0-9-]{36})(?:@(\d+))?$/.exec(reference || '');
@@ -80,7 +83,7 @@ export async function prepareSourceRun(input, workflow = false) {
   return { ...prepared, agent: { ...prepared.agent, id: `cloud:${reference.assetId}` } };
 }
 async function saveDraft(payload) {
-  const user = await cloudClient().getUser();
+  const client = cloudClient(); const user = await client.getUser(); await client.requireApproved();
   const token = `cloud_${crypto.randomBytes(32).toString('hex')}`;
   const draft = { ...payload, userId: user.id, expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString() };
   validateCloudBundle(draft.bundle);

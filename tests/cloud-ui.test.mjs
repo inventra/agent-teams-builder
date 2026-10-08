@@ -7,7 +7,7 @@ const input = overrides => ({ kind: 'agent', title: '測試助手', slug: 'test-
 function fixture(overrides = {}) {
   const calls = [];
   const asset = { id: 'a1', owner_id: 'u1', workspace_id: null, revision: 1, ...input() };
-  const client = { getUser: async () => ({ id: 'u1', email: 'test@devices.vixo.invalid' }), listWorkspaces: async () => [{ id: 'team1', name: '測試團隊', owner_id: 'u1' }], listAssets: async args => { calls.push(['list', args]); return [asset]; }, getAsset: async () => asset, listRevisions: async () => [{ ...asset, created_at: '2026-10-08T00:00:00Z' }], saveAsset: async value => { calls.push(['save', value]); return { ...asset, ...value, workspace_id: value.workspaceId, revision: value.expectedRevision + 1 }; }, ...overrides };
+  const client = { getAccess: async () => ({ userId: 'u1', status: 'approved', isAdmin: false }), getUser: async () => ({ id: 'u1', email: 'test@devices.vixo.invalid' }), listWorkspaces: async () => [{ id: 'team1', name: '測試團隊', owner_id: 'u1' }], listAssets: async args => { calls.push(['list', args]); return [asset]; }, getAsset: async () => asset, listRevisions: async () => [{ ...asset, created_at: '2026-10-08T00:00:00Z' }], saveAsset: async value => { calls.push(['save', value]); return { ...asset, ...value, workspace_id: value.workspaceId, revision: value.expectedRevision + 1 }; }, ...overrides };
   return { client, calls, asset };
 }
 
@@ -84,6 +84,7 @@ test('workspace switch drops a late response from the previously selected scope'
   await controller.initialize();
   client.listAssets = ({ workspaceId }) => workspaceId === 'team1' ? new Promise(resolve => { resolveSlow = resolve; }) : Promise.resolve([{ id: 'personal-asset' }]);
   const slow = controller.chooseScope('team1');
+  await new Promise(resolve => setImmediate(resolve));
   await controller.chooseScope(null);
   resolveSlow([{ id: 'team-asset' }]); await slow;
   assert.equal(controller.state.scope, null);
@@ -97,6 +98,7 @@ test('disconnect removes data immediately and ignores late detail responses', as
   await controller.initialize();
   client.getAsset = () => new Promise(resolve => { resolveAsset = resolve; });
   const pending = controller.selectAsset('a1');
+  await new Promise(resolve => setImmediate(resolve));
   await controller.clear();
   resolveAsset({ id: 'private-late-data' }); await pending;
   assert.equal(controller.state.user, null); assert.equal(controller.state.selected, null);
@@ -147,4 +149,57 @@ test('account errors distinguish successful binding with unavailable session fro
   assert.match(friendlyError({ code: 'account_already_bound', status: 409 }), /目前身分已設定帳號密碼/);
   assert.match(friendlyError({ code: 'username_unavailable', status: 409 }), /帳號已被使用/);
   assert.match(friendlyError({ code: 'invalid_credentials', status: 401 }), /帳號或密碼不正確/);
+});
+
+
+test('pending and disabled identities never load workspaces or assets and cannot stage or publish', async () => {
+  for (const status of ['pending', 'disabled']) {
+    let privateCalls = 0;
+    const { client } = fixture({ getAccess: async () => ({ userId: 'u1', status, isAdmin: false }), listWorkspaces: async () => { privateCalls++; return []; }, listAssets: async () => { privateCalls++; return []; } });
+    const controller = createCloudController(client);
+    assert.equal(await controller.initialize(), true);
+    assert.equal(controller.state.user.id, 'u1'); assert.equal(controller.state.access.status, status);
+    assert.equal(privateCalls, 0);
+    assert.throws(() => controller.stage(input()), /核准/);
+    await assert.rejects(controller.selectAsset('a1'), /核准/);
+    await assert.rejects(controller.publish(), /核准/);
+  }
+});
+
+test('access revocation clears private state and discards a detail response already in flight', async () => {
+  let status = 'approved', resolveAsset;
+  const { client } = fixture({ getAccess: async () => ({ userId: 'u1', status, isAdmin: false }) });
+  const controller = createCloudController(client); await controller.initialize(); controller.stage(input());
+  client.getAsset = () => new Promise(resolve => { resolveAsset = resolve; });
+  const pending = controller.selectAsset('a1'); await new Promise(resolve => setImmediate(resolve));
+  status = 'disabled'; await controller.refresh();
+  resolveAsset({ id: 'private-late-response' }); await pending;
+  assert.equal(controller.state.access.status, 'disabled');
+  for (const field of ['assets', 'workspaces', 'revisions']) assert.deepEqual(controller.state[field], []);
+  assert.equal(controller.state.selected, null); assert.equal(controller.state.preview, null);
+});
+
+test('permission checks fail closed during network errors and suspension invalidates late publication', async () => {
+  let resolveSave;
+  const { client } = fixture({ saveAsset: () => new Promise(resolve => { resolveSave = resolve; }) });
+  const controller = createCloudController(client); await controller.initialize(); controller.stage(input());
+  const pending = controller.publish(); await new Promise(resolve => setImmediate(resolve));
+  controller.suspend(); resolveSave({ id: 'late-save', kind: 'agent' });
+  assert.equal(await pending, null); assert.deepEqual(controller.state.assets, []);
+  client.getAccess = async () => { throw Object.assign(new Error('offline'), { code: 'network_error' }); };
+  await assert.rejects(controller.refresh(), /offline/);
+  assert.equal(controller.state.access, null); assert.deepEqual(controller.state.workspaces, []);
+});
+
+test('approval can be rechecked without losing the connected identity and mismatched access cannot reveal assets', async () => {
+  let access = { userId: 'u1', status: 'pending', isAdmin: false };
+  const { client } = fixture({ getAccess: async () => access });
+  const controller = createCloudController(client); await controller.initialize();
+  access = { ...access, status: 'approved' }; await controller.refresh();
+  assert.equal(controller.state.user.id, 'u1'); assert.equal(controller.state.assets.length, 1);
+  access = { ...access, userId: 'different-identity' };
+  await assert.rejects(controller.refresh(), /目前帳號/);
+  assert.equal(controller.state.access, null); assert.deepEqual(controller.state.assets, []);
+  assert.match(friendlyError({ code: 'account_registration_unconfirmed' }), /勿重複註冊/);
+  assert.match(friendlyError({ code: 'account_pending', status: 403 }), /Kevin/);
 });

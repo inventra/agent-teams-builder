@@ -1,6 +1,21 @@
-# VIXO Agent Teams Builder 1.10.0 測試報告
+# VIXO Agent Teams Builder 1.11.0 測試報告
 
 測試日期：2026-10-08（Asia/Taipei）；下方歷史版本各自保留原驗證範圍。
+
+## v1.11.0 自行註冊與管理員審核
+
+- 本機全套 Node 測試：161 PASS、0 FAIL、1 SKIP（根目錄 70、Plugin 91 通過；原有 live Codex CDP 測試維持 SKIP）。註冊 Edge 13 項測試涵蓋專案 API key、欄位／權限注入、密碼 Unicode／UTF-8 上限、持久配額、重複帳號與建立結果不確定的處理。
+- 隔離 PostgreSQL 共 255 項 SQL 斷言通過：001–005 的既有 125 項在升級前執行；006 的審核 69 項與配額 61 項在升級後執行。新兩份 rollback suites 也在正式 Supabase 通過，不留下 fixture。
+- 真 PostgreSQL 並行測試確認：停用等待已進行的寫入完成，下一請求被拒；60 個全域註冊請求僅 50 個放行，同 IP 10 個僅 5 個放行。隔離升級核對同 UUID 的兩份原資產所有欄位不變；001–005 未修改。
+- 006 migration 與 vixo-register 已部署。以兩個新 QA 帳號進行 8 組真實 HTTP 驗證：註冊 pending、禁止自行升權、角色注入／重名拒絕、管理員核准、不自動加入團隊、私人資料隔離、舊 session 停用後拒絕雲端與快取準備、恢復與密碼登入。QA 帳號最後停用，原管理員私人資產 checksum 不變。
+- 完整瀏覽器 fixtures 通過：自行註冊、待審核／停用頁、三種管理篩選與核准／停用／恢復、焦點與離線清理、晚回應防護、未設定帳密的既有管理員／pending 身分，以及既有帳密、配對、版本、團隊與手機版回歸。
+- 既有使用者的 Auth UUID 經可信操作端核對後，單獨設為唯一管理員；姓名、username 或可修改的 user metadata 均不能決定權限。未替使用者建立、讀取或修改密碼。
+
+### v1.11.0 驗證邊界
+
+- 帳號核准與團隊角色分開；管理員不因此取得他人的私人資產。所有雲端執行準備均須即時核准檢查，完全離線時不能以舊核准狀態執行雲端快取。
+- 自訂註冊入口以公開專案 API key 識別客戶端，只建立 pending；此 key 不是使用者核准憑證。標準 Auth 公開 signUp 保持停用，不提供 SMTP／M365 或自助重設密碼。
+- UI fixture 與真實 Supabase API 分別測試；GitHub Actions、Pages、發行檔及安裝後讀回以本版 commit 的發布紀錄為準。Agent／ERP 實際執行仍在本機，未執行正式 ERP 操作。
 
 ## v1.10.0 帳號密碼驗證
 

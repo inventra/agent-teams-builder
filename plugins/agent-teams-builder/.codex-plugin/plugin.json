@@ -1,6 +1,6 @@
 {
   "name": "agent-teams-builder",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Cloud-synchronized VIXO Agents, Skills and Workflows with confirmed SOPs and host-native execution.",
   "author": {
     "name": "LazyOffice"

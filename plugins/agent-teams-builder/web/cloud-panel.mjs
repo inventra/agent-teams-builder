@@ -21,6 +21,13 @@ async function api(route, body) {
   return data;
 }
 function accountError(error) {
+  if (error.code === 'account_pending') return '帳號正在等待 Kevin 管理員核准。';
+  if (error.code === 'account_disabled') return '此帳號已停用，請聯絡 Kevin 管理員。';
+  if (error.code === 'admin_required') return '這項操作需要管理員權限。';
+  if (error.code === 'account_registration_unconfirmed') return '註冊結果待確認。請先用剛填寫的帳號密碼登入；若仍無法登入，請聯絡管理員，勿重複註冊。';
+  if (error.code === 'account_registered_session_unavailable') return '帳號已建立，請用剛註冊的帳號密碼登入。';
+  if (error.code === 'account_already_connected') return '此裝置已連線，請保留原身分設定帳號。新註冊不會帶入原資料。';
+  if (error.name === 'TypeError') return '無法連上雲端，請確認網路後重新檢查權限。';
   if (['account_bind_in_progress', 'account_bind_unconfirmed'].includes(error.code)) return '帳號設定正在處理或結果待確認。請先用剛設定的帳號密碼登入；若仍無法登入，請聯絡管理員，勿重複設定。';
   if (error.code === 'account_bound_session_unavailable') return '帳號已設定，請用剛設定的帳號密碼登入';
   if (error.code === 'account_already_bound') return '目前身分已設定帳號密碼，請使用原有帳號登入。';
@@ -33,20 +40,30 @@ const action = (handler) => async (event) => {
   const button = event?.submitter || event?.currentTarget;
   if (button) button.disabled = true;
   try { await handler(event); }
-  catch (error) { if (error.code !== 'stale_operation') notice(accountError(error)); }
+  catch (error) {
+    if (error.code === 'stale_operation') return;
+    if (state?.connected && (['account_pending', 'account_disabled', 'network_error', 'access_unconfirmed'].includes(error.code) || error.name === 'TypeError')) {
+      suspendConnection();
+      if (['account_pending', 'account_disabled'].includes(error.code)) state.access = { userId: state.user?.id, status: error.code === 'account_disabled' ? 'disabled' : 'pending', isAdmin: false };
+      renderAccess();
+    }
+    if (error.code === 'admin_required') { $('account-list').replaceChildren(); $('account-admin').hidden = true; $('manage-accounts').hidden = true; }
+    notice(accountError(error));
+  }
   finally { if (button) button.disabled = false; }
 };
 function option(select, value, text) { const item = document.createElement('option'); item.value = value; item.textContent = text; select.append(item); }
 function invalidateDraft() { draft = null; $('draft').hidden = true; $('draft-content').textContent = ''; }
 function clearIdentityView() {
   localAgents = []; state = null; invalidateDraft();
-  for (const name of ['device-result', 'asset-detail', 'identity', 'notice']) $(name).textContent = '';
-  for (const name of ['assets', 'local-agent', 'resource', 'workspace']) $(name).replaceChildren();
-  for (const name of ['account', 'publish-section', 'assets-section']) $(name).hidden = true;
-  for (const name of ['login-password', 'setup-password', 'setup-password-confirm', 'pair-code']) $(name).value = '';
+  for (const name of ['device-result', 'asset-detail', 'identity', 'notice', 'access-message']) $(name).textContent = '';
+  for (const name of ['assets', 'local-agent', 'resource', 'workspace', 'account-list']) $(name).replaceChildren();
+  for (const name of ['account', 'publish-section', 'assets-section', 'account-admin', 'access-state']) $(name).hidden = true;
+  for (const name of ['login-password', 'setup-password', 'setup-password-confirm', 'pair-code', 'register-password', 'register-confirm', 'register-name', 'register-account']) $(name).value = '';
   $('setup-account').value = ''; $('account-setup').hidden = true;
   $('portal-help').textContent = '';
-  for (const name of ['advanced-pair', 'advanced-device']) $(name).open = false;
+  for (const name of ['advanced-pair', 'advanced-device', 'registration']) $(name).open = false;
+  $('manage-accounts').hidden = true;
   $('connect').hidden = false;
 }
 function resources() {
@@ -56,16 +73,37 @@ function resources() {
   for (const entry of (kind === 'skill' ? agent?.skills : agent?.workflows) || []) option($('resource'), entry.id, entry.name);
   invalidateDraft();
 }
+function renderAccess() {
+  if (!state?.connected) return;
+  $('connect').hidden = true;
+  for (const id of ['account', 'publish-section', 'assets-section', 'account-admin']) $(id).hidden = true;
+  $('access-state').hidden = false;
+  const status = state.access?.status;
+  $('access-title').textContent = status === 'pending' ? '等待 Kevin 核准' : status === 'disabled' ? '帳號已停用' : '請重新確認使用權限';
+  $('access-message').textContent = status === 'pending' ? (state.user?.accountConfigured ? '註冊已完成。Kevin 管理員核准後，才能使用雲端 Agent、Skill 與 Workflow。' : '已連接雲端身分。請先設定帳號密碼，方便 Kevin 管理員辨識；核准後才能使用雲端內容。') : status === 'disabled' ? '此帳號目前無法使用雲端內容，請聯絡 Kevin 管理員。' : '目前尚未確認帳號權限，請連線後重新檢查。';
+  if (status === 'pending' && !state.user?.accountConfigured) {
+    $('access-state').insertBefore($('account-setup'), $('access-recheck'));
+    $('account-setup').hidden = false;
+  }
+}
+function suspendConnection() {
+  const previous = state;
+  generation++; clearIdentityView();
+  if (previous?.connected) { state = { ...previous, access: null }; renderAccess(); }
+}
 async function refresh() {
+  suspendConnection();
   const next = await api('status');
-  if (state?.user?.id && state.user.id !== next.user?.id) { generation++; clearIdentityView(); }
   state = next;
-  $('connect').hidden = state.connected;
-  for (const name of ['account', 'publish-section', 'assets-section']) $(name).hidden = !state.connected;
-  $('identity').textContent = state.user ? `${state.user.username ? `帳號：${state.user.username}` : '已連線的 VIXO 裝置'} · ${state.user.id.slice(0, 8)}` : '';
-  $('account-setup').hidden = !state.connected || Boolean(state.user?.accountConfigured);
-  $('portal-help').textContent = state.user?.accountConfigured ? '網站和其他裝置可直接使用這組帳號密碼登入。' : '請先在上方設定帳號密碼，再開啟網站登入，即可看到原有雲端內容。';
   if (!state.connected) { clearIdentityView(); state = next; return; }
+  if (state.access?.status !== 'approved' || state.access?.userId !== state.user?.id) { renderAccess(); return; }
+  $('connect').hidden = true; $('access-state').hidden = true;
+  for (const id of ['account', 'publish-section', 'assets-section']) $(id).hidden = false;
+  $('identity').textContent = `${state.user.username ? `帳號：${state.user.username}` : state.access.isAdmin ? 'Kevin 管理員' : '已連線的 VIXO 裝置'} · ${state.user.id.slice(0, 8)}`;
+  $('account').insertBefore($('account-setup'), $('account').querySelector('.actions'));
+  $('account-setup').hidden = Boolean(state.user.accountConfigured);
+  $('manage-accounts').hidden = !state.access.isAdmin;
+  $('portal-help').textContent = state.user.accountConfigured ? '網站和其他裝置可直接使用這組帳號密碼登入。' : '請先在上方設定原身分的帳號密碼，再到網站登入。原有雲端內容會保留。';
   const [agents, workspaces, assets] = await Promise.all([api('local-agents'), api('workspaces'), api('assets')]);
   localAgents = agents; $('local-agent').replaceChildren();
   for (const agent of agents) option($('local-agent'), agent.id, agent.displayName);
@@ -88,7 +126,19 @@ $('login').onsubmit = action(async () => {
   generation++; clearIdentityView();
   await api('login', credentials);
   broadcastConnectionChange();
-  await refresh(); notice('已登入，原有雲端內容已載入。');
+  await refresh(); if (state?.access?.status === 'approved') notice('已登入，原有雲端內容已載入。');
+});
+$('register').onsubmit = action(async () => {
+  if (state?.connected) throw new Error('此裝置已連線，請保留原身分設定帳號。');
+  const username = $('register-account').value.trim().toLowerCase(), password = $('register-password').value, displayName = $('register-name').value.trim();
+  if (!displayName || [...displayName].length > 80) throw new Error('請填寫 1–80 個字元的姓名，方便管理員確認身分。');
+  if (!/^[a-z][a-z0-9_-]{2,31}$/.test(username)) throw new Error('帳號需為 3–32 個小寫英文、數字、底線或連字號，且以英文字母開頭。');
+  if ([...password].length < 12 || new TextEncoder().encode(password).length > 72) throw new Error('密碼需至少 12 個字元；過長時請縮短密碼，中文字元佔較多長度。');
+  if (password !== $('register-confirm').value) throw new Error('兩次輸入的密碼不一致，請重新確認。');
+  generation++; clearIdentityView();
+  try { await api('register', { username, password, displayName }); }
+  catch (error) { if (['account_registration_unconfirmed', 'account_registered_session_unavailable'].includes(error.code)) $('login-account').value = username; throw error; }
+  broadcastConnectionChange(); await refresh();
 });
 $('credentials').onsubmit = action(async () => {
   const originalUserId = state?.user?.id;
@@ -111,7 +161,7 @@ $('credentials').onsubmit = action(async () => {
   generation++; clearIdentityView(); broadcastConnectionChange();
   await refresh();
   if (state?.user?.id !== originalUserId) throw new Error('雲端身分已變更，請重新整理後確認。');
-  notice('帳號密碼已設定，原有資產與團隊權限已保留。網站和其他裝置可直接登入。');
+  notice(state?.access?.status === 'pending' ? '帳號密碼已設定，仍須等待 Kevin 管理員核准。原有雲端身分已保留。' : '帳號密碼已設定，原有資產與團隊權限已保留。網站和其他裝置可直接登入。');
 });
 $('pair').onsubmit = action(async () => {
   const code = $('pair-code').value;
@@ -121,11 +171,13 @@ $('pair').onsubmit = action(async () => {
   $('pair-code').value = '';
   await refresh(); notice('裝置已連線。');
 });
-$('disconnect').onclick = action(async () => {
+const disconnect = action(async () => {
   generation++; clearIdentityView();
   try { await api('disconnect', {}); } finally { broadcastConnectionChange(); await refresh(); }
   notice('已登出此裝置。');
 });
+$('disconnect').onclick = disconnect; $('access-disconnect').onclick = disconnect;
+$('access-recheck').onclick = action(refresh);
 $('device-code').onclick = action(async () => {
   $('device-result').textContent = '';
   const result = await api('device-code', {});
@@ -135,6 +187,43 @@ $('portal').onclick = action(async () => {
   await api('open-portal', {});
   notice(state?.user?.accountConfigured ? '已在預設瀏覽器開啟雲端管理中心，請用這組帳號密碼登入。' : '已在預設瀏覽器開啟雲端管理中心。請先在這台已連線的 VIXO 設定帳號密碼，再到網站登入。');
 });
+async function ensureAdmin() {
+  const access = await api('access');
+  if (access.userId !== state?.user?.id) throw staleOperation();
+  state.access = access;
+  if (access.status !== 'approved') { const next = state; suspendConnection(); state = next; renderAccess(); return false; }
+  if (!access.isAdmin) { generation++; $('account-list').replaceChildren(); $('account-admin').hidden = true; $('manage-accounts').hidden = true; throw Object.assign(new Error('這項操作需要管理員權限。'), { code: 'admin_required' }); }
+  return true;
+}
+async function showAccounts() {
+  $('account-list').replaceChildren();
+  if (!await ensureAdmin()) return;
+  const accounts = await api('accounts');
+  for (const [status, title] of [['pending', '待審核'], ['approved', '已核准'], ['disabled', '已停用']]) {
+    const group = document.createElement('section'); group.setAttribute('aria-label', title);
+    const heading = document.createElement('h3'); heading.textContent = title; group.append(heading);
+    const rows = accounts.filter(row => row.status === status);
+    if (!rows.length) { const empty = document.createElement('p'); empty.textContent = '目前沒有帳號。'; group.append(empty); }
+    for (const row of rows) {
+      const item = document.createElement('div'); item.className = 'actions';
+      const label = document.createElement('p'); label.textContent = `${row.displayName || row.username || (row.isAdmin ? 'Kevin 管理員' : '尚未設定帳號')} · ${row.username || '既有裝置身分'}`; item.append(label);
+      if (row.isAdmin) { const tag = document.createElement('p'); tag.textContent = '管理員'; item.append(tag); }
+      else {
+        for (const desired of status === 'pending' ? ['approved', 'disabled'] : [status === 'approved' ? 'disabled' : 'approved']) {
+          const button = document.createElement('button');
+          button.textContent = desired === 'disabled' ? '停用' : status === 'pending' ? '核准' : '恢復';
+          button.onclick = action(async () => { if (!await ensureAdmin()) return; await api('account-status', { userId: row.userId, status: desired }); broadcastConnectionChange(); await showAccounts(); notice(desired === 'approved' ? '帳號已核准，團隊權限需另外邀請。' : '帳號已停用。'); });
+          item.append(button);
+        }
+      }
+      group.append(item);
+    }
+    $('account-list').append(group);
+  }
+  $('account-admin').hidden = false;
+}
+$('manage-accounts').onclick = action(showAccounts);
+$('close-accounts').onclick = () => { $('account-admin').hidden = true; $('account-list').replaceChildren(); };
 $('reload').onclick = action(refresh);
 $('kind').onchange = resources; $('local-agent').onchange = resources;
 $('resource').onchange = invalidateDraft; $('workspace').onchange = invalidateDraft;
@@ -159,16 +248,7 @@ if (connectionChannel) connectionChannel.onmessage = event => {
   generation++; clearIdentityView();
   action(refresh)();
 };
-window.addEventListener('focus', () => {
-  // BroadcastChannel is unavailable in some opaque/sandboxed host frames.
-  // Never leave an old capability exposed while checking the active identity.
-  $('device-result').textContent = '';
-  if (!state) return;
-  action(async () => {
-    const next = await api('status');
-    if (next.user?.id !== state?.user?.id || next.connected !== state?.connected || next.user?.accountConfigured !== state?.user?.accountConfigured) {
-      generation++; clearIdentityView(); await refresh();
-    }
-  })();
-});
-refresh().catch((error) => { if (error.code !== 'stale_operation') notice(accountError(error)); });
+window.addEventListener('focus', () => { if (state?.connected) action(refresh)(); });
+window.addEventListener('online', () => { if (state?.connected) action(refresh)(); });
+window.addEventListener('offline', () => { if (state?.connected) { suspendConnection(); notice('目前無法連線，已隱藏雲端內容。請連線後重新檢查帳號權限。'); } });
+action(refresh)();

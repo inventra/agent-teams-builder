@@ -91,11 +91,11 @@ test('concurrent requests refresh once and reuse only new access token', async (
   await Promise.all([client.getUser(), client.getUser()]); assert.equal(refreshes, 1); assert.equal(saved.refresh_token, 'r2');
 });
 test('revision conflicts retain server conflict meaning', async () => {
-  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a' }), fetchImpl: async () => reply({ code: '40001', message: 'revision_conflict' }, 400) });
+  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a' }), fetchImpl: async url => url.endsWith('/vixo_my_access') ? reply({ userId: id, status: 'approved', isAdmin: false }) : reply({ code: '40001', message: 'revision_conflict' }, 400) });
   await assert.rejects(client.saveAsset({ id, kind: 'agent', expectedRevision: 3 }), { status: 409, code: 'revision_conflict' });
 });
 test('unreadable asset is never returned as an empty valid asset', async () => {
-  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a' }), fetchImpl: async () => reply([]) });
+  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a' }), fetchImpl: async url => reply(url.endsWith('/vixo_my_access') ? { userId: id, status: 'approved', isAdmin: false } : []) });
   await assert.rejects(client.getAsset(id), { status: 404 });
 });
 test('signout clears local credentials even when server is unreachable', async () => {
@@ -121,4 +121,60 @@ test('a stale tab cannot consume a one-time pairing code after shared session ch
   await assert.rejects(stale.pairDevice('a'.repeat(64)), { code: 'account_changed' }); assert.equal(calls, 0);
   const fresh = createCloudClient(config); await fresh.pairDevice('a'.repeat(64));
   assert.equal(calls, 1); assert.equal(storage.access_token, 'paired-access');
+});
+test('self registration whitelists fields, keeps passwords out of storage and refuses replacing a connected identity', async () => {
+  let saved = null; let calls = 0;
+  const client = createCloudClient({ ...options, getSession: () => saved, saveSession: value => { saved = value; }, fetchImpl: async (url, request) => {
+    calls++; assert.ok(url.endsWith('/functions/v1/vixo-register'));
+    assert.equal(request.headers.authorization, undefined);
+    assert.deepEqual(JSON.parse(request.body), { username: 'kai_test', password: 'test-password-private', displayName: '測試同仁' });
+    return reply(passwordSession);
+  } });
+  await client.registerAccount({ username: ' KAI_TEST ', password: 'test-password-private', displayName: ' 測試同仁 ', isAdmin: true, status: 'approved' });
+  assert.doesNotMatch(JSON.stringify(saved), /test-password-private|isAdmin|approved/);
+  await assert.rejects(client.registerAccount({ username: 'another_user', password: 'test-password-private', displayName: 'Other' }), { code: 'account_already_connected' });
+  assert.equal(calls, 1);
+});
+test('pending and disabled accounts can read status but no data or business RPC reaches the network', async () => {
+  for (const status of ['pending', 'disabled']) {
+    const requests = [];
+    const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a', user: { id, isAdmin: true } }), fetchImpl: async url => {
+      requests.push(url); assert.ok(url.endsWith('/vixo_my_access')); return reply({ userId: id, status, isAdmin: true });
+    } });
+    assert.equal((await client.getAccess()).isAdmin, false);
+    for (const action of [() => client.listAssets(), () => client.createWorkspace('Test'), () => client.createDeviceCode(), () => client.listAccounts()]) {
+      await assert.rejects(action(), { status: 403, code: `account_${status}` });
+    }
+    assert.equal(requests.length, 5);
+  }
+});
+test('live status revocation blocks the next read, including with the same signed-in session', async () => {
+  let status = 'approved'; let reads = 0;
+  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a', user: { id } }), fetchImpl: async url => {
+    if (url.endsWith('/vixo_my_access')) return reply({ userId: id, status, isAdmin: false });
+    reads++; return reply([]);
+  } });
+  await client.listAssets(); status = 'disabled';
+  await assert.rejects(client.listAssets(), { code: 'account_disabled' }); assert.equal(reads, 1);
+});
+test('admin changes require current server authorization and never retry after unknown outcome', async () => {
+  let isAdmin = false; let writes = 0;
+  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a', refresh_token: 'r', user: { id } }), fetchImpl: async (url, request) => {
+    if (url.endsWith('/vixo_my_access')) return reply({ userId: id, status: 'approved', isAdmin });
+    assert.ok(url.endsWith('/vixo_admin_set_account_status')); writes++;
+    assert.deepEqual(JSON.parse(request.body), { p_user_id: id, p_status: 'approved' });
+    return reply({ code: 'PT403', message: 'admin_required' }, 403);
+  } });
+  await assert.rejects(client.setAccountStatus(id, 'approved'), { code: 'admin_required' }); assert.equal(writes, 0);
+  isAdmin = true;
+  await assert.rejects(client.setAccountStatus(id, 'approved'), { code: 'admin_required' }); assert.equal(writes, 1);
+  await assert.rejects(client.setAccountStatus(id, 'admin'), { code: 'invalid_account_status' }); assert.equal(writes, 1);
+});
+test('approval status cannot cross identities or silently allow malformed or offline results', async () => {
+  for (const result of [{ userId: 'other', status: 'approved' }, { userId: id, status: 'unknown' }, null]) {
+    const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a', user: { id } }), fetchImpl: async () => reply(result) });
+    await assert.rejects(client.requireApproved(), { code: 'access_unconfirmed' });
+  }
+  const client = createCloudClient({ ...options, getSession: () => ({ access_token: 'a', user: { id } }), fetchImpl: async () => { throw new Error('offline'); } });
+  await assert.rejects(client.requireApproved(), { code: 'network_error' });
 });

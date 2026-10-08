@@ -20,13 +20,31 @@
       <label>密碼<input id="login-password" name="password" type="password" autocomplete="current-password" required maxlength="72" placeholder="請輸入密碼"></label>
       <button class="primary" type="submit">登入雲端</button>
     </form>
-    <p class="account-note">第一次設定：請回到已連線、保有原本 Agent 的 VIXO 裝置，在本頁選擇「設定帳號密碼」。完成後，網站和其他裝置即可直接登入同一份內容。</p>
+    <p class="account-note">已有 Agent 的舊裝置：請回到已連線、保有原本 Agent 的 VIXO 裝置，在本頁選擇「設定帳號密碼」。完成後，網站和其他裝置即可直接登入同一份內容。</p>
+    <details class="advanced-connect" id="registration">
+      <summary>新同仁：註冊帳號</summary>
+      <p>建立帳號後，需等 Kevin 管理員核准才能使用雲端。核准不會自動加入團隊或取得其他人的私人資料。</p>
+      <p class="account-note">已有 Agent 的舊裝置請設定原身分的帳號密碼。新註冊帳號不會帶入原本資料。</p>
+      <form id="register" class="account-form">
+        <label>姓名<input id="register-name" type="text" autocomplete="name" required maxlength="80"></label>
+        <label>註冊帳號<input id="register-account" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" required minlength="3" maxlength="32"></label>
+        <label>註冊密碼<input id="register-password" type="password" autocomplete="new-password" required minlength="12" maxlength="72"></label>
+        <label>確認註冊密碼<input id="register-confirm" type="password" autocomplete="new-password" required minlength="12" maxlength="72"></label>
+        <p class="account-hint">帳號限 3–32 個小寫英文、數字、_ 或 -，以英文字母開頭。密碼至少 12 個字元，建議使用英文字母、數字與符號。</p>
+        <button class="primary" type="submit">送出註冊，等待核准</button>
+      </form>
+    </details>
     <p class="account-hint">忘記密碼時，請向管理員確認恢復方式，並保留仍可使用的已連線裝置。</p>
     <details class="advanced-connect" id="advanced-pair">
       <summary>進階：使用裝置連線碼或團隊邀請碼</summary>
       <p>僅供既有裝置配對與團隊邀請使用。自己的換機碼沿用同一身分；同仁邀請碼只加入指定團隊。</p>
       <form id="pair"><label>一次性裝置連線碼或團隊邀請碼<input id="pair-code" type="password" autocomplete="off" required></label><button type="submit">使用連線碼</button></form>
     </details>
+  </section>
+  <section id="access-state" hidden>
+    <h2 id="access-title">請重新確認使用權限</h2><p id="access-message"></p>
+    <p class="account-hint">核准只開放雲端使用資格。團隊分享需另外邀請；其他人的私人資料不會開放。</p>
+    <button id="access-recheck" class="primary">重新檢查狀態</button><button id="access-disconnect">登出此裝置</button>
   </section>
   <section id="account" hidden>
     <h2>雲端已連線</h2>
@@ -44,10 +62,11 @@
         <button class="primary" type="submit">儲存帳號密碼</button>
       </form>
     </div>
-    <div class="actions"><button id="portal">開啟雲端管理中心</button><button id="disconnect">登出此裝置</button></div>
+    <div class="actions"><button id="manage-accounts" hidden>帳號管理</button><button id="portal">開啟雲端管理中心</button><button id="disconnect">登出此裝置</button></div>
     <p id="portal-help" class="account-hint"></p>
     <details class="advanced-connect" id="advanced-device"><summary>進階：產生一次性裝置換機碼</summary><p>平常換裝置請直接使用帳號密碼登入。此連線碼只用於自己的裝置，不能用來分享給同仁。</p><button id="device-code">連接另一台自己的裝置</button><p id="device-result"></p></details>
   </section>
+  <section id="account-admin" hidden><h2>帳號管理</h2><p>帳號核准後仍需另外加入團隊。管理員帳號不能在此停用。</p><div id="account-list"></div><button id="close-accounts">關閉帳號管理</button></section>
   <section id="publish-section" hidden>
     <h2>把本地訓練成果上傳</h2><p>先檢視完整內容，再確認發布。個人記憶與執行紀錄不會包含在共用套件。</p>
     <form id="preview"><label>本地 Agent<select id="local-agent" required></select></label><label>發布內容<select id="kind"><option value="agent">完整 Agent</option><option value="skill">單一 Skill</option><option value="workflow">單一 Workflow（含所需 Skill）</option></select></label><label id="resource-label" hidden>Skill／Workflow<select id="resource"></select></label><label>發布到<select id="workspace"><option value="">我的個人空間</option></select></label><button>預覽完整內容</button></form>

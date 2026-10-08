@@ -96,6 +96,12 @@ export function createCloudSync({ client, cloudRoot }) {
   async function user({ allowOfflineCache = false } = {}) {
     const current = await client.getUser({ allowOfflineCache });
     check(current?.id, "Cloud sign-in is required", "unauthorized");
+    // Cloud-account approval is always checked online, including cached runs.
+    // A revoked account cannot use a previously cached permission as authority.
+    if (typeof client.requireApproved === 'function') {
+      const access = await client.requireApproved();
+      check(access.userId === current.id, "Cloud account changed during operation", "account_changed");
+    }
     return cloudId(current.id);
   }
   async function sameUser(account, options) { check(await user(options) === account, "Cloud account changed during operation", "account_changed"); }
