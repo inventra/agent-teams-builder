@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { normalizeZipUtf8Names } from "./zip-utf8.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const version = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")).version;
@@ -165,6 +166,7 @@ fs.mkdirSync(path.dirname(archive), { recursive: true });
 fs.rmSync(archive, { force: true });
 if (process.platform === "darwin") run("ditto", ["-c", "-k", "--norsrc", "--keepParent", stage, archive]);
 else run("zip", ["-qry", archive, releaseName], { cwd: outputRoot });
+normalizeZipUtf8Names(archive, stage);
 const archiveHash = crypto.createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
 fs.writeFileSync(`${archive}.sha256`, `${archiveHash}  ${path.basename(archive)}\n`, "utf8");
 process.stdout.write(`${JSON.stringify({ version, stage, archive, archiveHash, nodeVersion }, null, 2)}\n`);

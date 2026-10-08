@@ -4,11 +4,13 @@
 
 ## v1.8.0 本機驗證
 
-- `npm test`：64 PASS、0 FAIL、1 SKIP；包含 13 項安裝／更新與 51 項 Plugin 回歸。SKIP 仍是需 live Codex CDP 的實機側欄測試。
+- `npm test`：71 PASS、0 FAIL、1 SKIP；包含 13 項安裝／更新、7 項 ZIP 檔名編碼與 51 項 Plugin 回歸。SKIP 仍是需 live Codex CDP 的實機側欄測試。
 - ERP 共用工具：43 項離線測試通過，涵蓋完整輸入 gate、影片登錄、假桌面請款、防重送及搬移後技能尋址；不操作 ERP。
 - 新增 6 項影片規則整合測試，涵蓋兩位不同 Agent、普通／明確共用技能選擇、Workflow 手動／自動核准、既有紀錄的 reply／approve 續跑，以及含空白路徑的 Plugin 搬移。Agent 私人檔案逐項讀回，確認共用路由沒有修改它們。
 - 新入口 `vixo-video-intake` 保持自動技能選擇；影片與 ERP 有關即轉交 `erp-video-automation`。實際檔案路徑由目前 Plugin 位置解析，不寫死開發機或員工技能目錄。
 - 全部 6 個 Skill 的 YAML 前言與相對文件連結、7 個版本欄位（含 lockfile 根 package）及 Git whitespace 檢查通過。
+
+- 修正 macOS 包裝工具漏標中文檔名 UTF-8 的問題。先完整核對封裝與 staging，再只調整對應 local／central header 的編碼旗標；不改壓縮資料、檔案內容、執行權限或 offset。7 項 ZIP 回歸包含標準 Python reader、不同 header／編碼／comment、不完整格式拒絕及不修改其他位元組。
 
 ### v1.8.0 驗證邊界
 

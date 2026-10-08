@@ -79,7 +79,7 @@ Codex 正式 Plugin API 目前未提供「自訂左側頁面」manifest 欄位�
 
 ## 驗證狀態
 
-- v1.8.0 本機 Node 回歸 64 通過、0 失敗、1 個 live Codex CDP 測試 skip；ERP 工具另有 43 項離線測試通過。新影片規則涵蓋普通 Agent、Workflow、舊紀錄續跑與搬移後的公用技能尋址；沒有以本次結果宣稱新影片模型端到端實跑或 ERP 實單已驗證。
+- v1.8.0 本機 Node 回歸 71 通過、0 失敗、1 個 live Codex CDP 測試 skip；ERP 工具另有 43 項離線測試通過。新影片規則涵蓋普通 Agent、Workflow、舊紀錄續跑與搬移後的公用技能尋址；沒有以本次結果宣稱新影片模型端到端實跑或 ERP 實單已驗證。
 - v1.7.0 本機程式回歸 58 通過、0 失敗、1 個需 live Codex CDP 的環境測試 skip。
 - 隔離瀏覽器另驗證工作台 9 組、图示 4 組、嵌入生命週期 3 組與雙側欄點擊 7 組；不是 Codex App 實機端到端證據。最新桌面重載仍需使用者確認。
 - Claude Code strict validator 與 Codex Plugin validator 通過。
