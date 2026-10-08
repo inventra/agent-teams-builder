@@ -51,6 +51,8 @@
   let active = false;
   let loaded = false;
   let frameName = "";
+  let framePath = "/";
+  let readyTimer = null;
 
   const normalized = (value) => String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
 
@@ -106,7 +108,10 @@
         font: 13px/1.5 system-ui, sans-serif;
         text-align: center;
         pointer-events: none;
+        background: Canvas;
+        z-index: 3;
       }
+      #${PAGE_ID} .vixo-agents-loading button { pointer-events: auto; margin-top: 12px; padding: 8px 16px; cursor: pointer; }
       #${PAGE_ID}[data-loaded="true"] .vixo-agents-loading { display: none; }
     `;
     (document.head || document.documentElement).appendChild(style);
@@ -254,7 +259,36 @@
     nextFrame.src = "about:blank";
     container.append(loading, nextFrame);
     frame = nextFrame;
+    const pendingFrame = frameName;
+    window.clearTimeout(readyTimer);
+    readyTimer = window.setTimeout(() => {
+      if (loaded || frameName !== pendingFrame || !container.isConnected) return;
+      const message = document.createElement("div");
+      message.setAttribute("role", "alert");
+      const text = document.createElement("p");
+      text.textContent = "VIXO 頁面尚未載入完成，請重新載入。";
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.textContent = "重新載入";
+      retry.addEventListener("click", () => navigatePage(framePath));
+      message.append(text, retry);
+      loading.replaceChildren(message);
+    }, 12_000);
     return container;
+  }
+
+  function navigatePage(path) {
+    if (!["/", "/cloud.html"].includes(path)) return;
+    // A fresh opaque frame keeps navigation within the local document bridge.
+    // Old documents cannot acknowledge or overwrite the next page's load.
+    window.clearTimeout(readyTimer);
+    framePath = path;
+    loaded = false;
+    restoreNative();
+    page?.remove();
+    page = null;
+    frame = null;
+    mountPage();
   }
 
   function restoreNative() {
@@ -543,8 +577,14 @@
   function onFrameMessage(event) {
     if (!frame || event.source !== frame.contentWindow) return;
     if (event.data?.type === "vixo-agents:ready") {
+      if (event.data.requestId !== frameName) return;
       loaded = true;
+      window.clearTimeout(readyTimer);
       page.dataset.loaded = "true";
+      return;
+    }
+    if (event.data?.type === "vixo-agents:navigate") {
+      if (event.data.requestId === frameName) navigatePage(event.data.path);
       return;
     }
     if (event.data?.type === "vixo-agents:create-codex-thread") {
@@ -567,6 +607,7 @@
     observer?.disconnect();
     observer = null;
     if (refreshTimer !== null) window.clearTimeout(refreshTimer);
+    window.clearTimeout(readyTimer);
     document.removeEventListener("click", onDocumentClick, true);
     window.removeEventListener("message", onFrameMessage);
     document.querySelectorAll(`[${OWNED}="true"]`).forEach((node) => node.remove());
@@ -583,6 +624,7 @@
       pageVisible: Boolean(active && page && !page.hidden && isVisibleElement(page)),
       frameLoaded: loaded,
       frameName,
+      framePath,
     };
   }
 

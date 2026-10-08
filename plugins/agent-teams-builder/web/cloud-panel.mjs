@@ -1,11 +1,14 @@
+import { navigateDashboard, notifyEmbedReady } from './embed-navigation.mjs';
+
 const $ = (id) => document.getElementById(id);
 let storedToken = '';
 try { storedToken = sessionStorage.getItem('vixo-token') || ''; } catch {}
-const token = new URLSearchParams(location.search).get('token') || storedToken;
+const token = globalThis.__VIXO_AGENTS_EMBED_TOKEN__ || new URLSearchParams(location.search).get('token') || storedToken;
 try { if (token) sessionStorage.setItem('vixo-token', token); } catch {}
 try { history.replaceState(null, '', location.pathname); } catch {}
 // Sandboxed Codex frames cannot rely on sessionStorage for the return trip.
 $('back').href = `/?token=${encodeURIComponent(token)}`;
+$('back').onclick = event => { event.preventDefault(); navigateDashboard('/', { token }); };
 let localAgents = [], draft = null, state = null, generation = 0;
 const notice = (text) => { $('notice').textContent = text; };
 let connectionChannel = null;
@@ -251,4 +254,5 @@ if (connectionChannel) connectionChannel.onmessage = event => {
 window.addEventListener('focus', () => { if (state?.connected) action(refresh)(); });
 window.addEventListener('online', () => { if (state?.connected) action(refresh)(); });
 window.addEventListener('offline', () => { if (state?.connected) { suspendConnection(); notice('目前無法連線，已隱藏雲端內容。請連線後重新檢查帳號權限。'); } });
-action(refresh)();
+await action(refresh)();
+notifyEmbedReady();

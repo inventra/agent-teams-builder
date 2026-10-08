@@ -26,6 +26,10 @@ test("web-only changes invalidate the injected page, while unchanged assets rema
     fs.writeFileSync(path.join(webDirectory, "icons.js"), "export const icon = () => '<svg></svg>'; ");
     assert.notEqual(sourceBundle({ injectionPath, webDirectory }).sourceHash, styled.sourceHash,
       "adding a new local icon module must also invalidate the old document");
+    const moduleBefore = sourceBundle({ injectionPath, webDirectory });
+    fs.writeFileSync(path.join(webDirectory, "cloud-panel.mjs"), "export const revision = 2;");
+    assert.notEqual(sourceBundle({ injectionPath, webDirectory }).sourceHash, moduleBefore.sourceHash,
+      "cloud page module changes must also replace the loaded document");
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
 });
 
@@ -54,6 +58,25 @@ test("hidden pages and ready frames are not rewritten", async () => {
       readStatus: async () => status,
       loadFrame: async () => assert.fail("must not rewrite an inactive or ready frame"),
     }), false);
+  }
+});
+
+test("embedded cloud navigation delivers only the requested local page with the existing bearer", async () => {
+  const sent = [];
+  const record = { connection: {} };
+  const options = {
+    readStatus: async () => ({ pageVisible: true, frameLoaded: false, frameName: "cloud-frame", framePath: "/cloud.html" }),
+    loadFrame: async (_connection, name, url) => sent.push({ name, url }),
+  };
+  await reconcileDashboardFrame(record, "http://127.0.0.1:12345/?token=fixture", options);
+  assert.deepEqual(sent, [{ name: "cloud-frame", url: "http://127.0.0.1:12345/cloud.html?token=fixture" }]);
+  assert.equal(await reconcileDashboardFrame(record, "http://127.0.0.1:12345/?token=fixture", options), false,
+    "pending delivery must not repeatedly overwrite a page while it starts");
+  for (const framePath of ["https://example.com", "//example.com", "/api/state", "/cloud.html?token=other", "/../cloud.html"]) {
+    await assert.rejects(reconcileDashboardFrame({ connection: {} }, "http://127.0.0.1:12345/?token=fixture", {
+      readStatus: async () => ({ pageVisible: true, frameLoaded: false, frameName: "invalid-frame", framePath }),
+      loadFrame: async () => assert.fail("unsupported routes must never be fetched"),
+    }), /page path/);
   }
 });
 

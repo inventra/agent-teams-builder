@@ -49,9 +49,9 @@ const server = createServer(async (request, response) => {
   const pathname = new URL(request.url, 'http://localhost').pathname;
   if (pathname === '/config.json') { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify({url:'https://fixture.invalid',key:'public-fixture-key'})); return; }
   if (pathname === '/cloud-client.mjs') { response.setHeader('content-type', 'text/javascript'); response.end(fixture); return; }
-  if (pathname === '/local-cloud' || pathname === '/cloud-panel.mjs') {
+  if (pathname === '/local-cloud' || pathname === '/cloud-panel.mjs' || pathname === '/embed-navigation.mjs') {
     response.setHeader('content-type',pathname.endsWith('.mjs') ? 'text/javascript' : 'text/html');
-    response.end(await readFile(path.join(root,'plugins/agent-teams-builder/web',pathname.endsWith('.mjs') ? 'cloud-panel.mjs' : 'cloud.html'))); return;
+    response.end(await readFile(path.join(root,'plugins/agent-teams-builder/web',pathname.endsWith('.mjs') ? pathname.slice(1) : 'cloud.html'))); return;
   }
   const files = {'/':'index.html','/index.html':'index.html','/app.mjs':'app.mjs','/styles.css':'styles.css'};
   if (!files[pathname]) { response.writeHead(404).end(); return; }

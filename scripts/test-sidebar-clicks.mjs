@@ -87,7 +87,7 @@ try {
   await page.getByRole("button", { name: "開啟 VIXO Agents", exact: true }).click();
   checks.push("native shell rerender restores one clickable entry and the open page");
   const frame = page.frames().find((item) => item.name().startsWith("vixo-agents-"));
-  await frame.setContent('<!doctype html><html><body><h1>合成 Docs 內容</h1><script>parent.postMessage({type:"vixo-agents:ready"},"*")</script></body></html>');
+  await frame.setContent('<!doctype html><html><body><h1>合成 Docs 內容</h1><script>parent.postMessage({type:"vixo-agents:ready",requestId:' + JSON.stringify(frame.name()) + '},"*")</script></body></html>');
   await page.waitForFunction(() => window.__vixoAgentsInjection__.status().frameLoaded);
   assert.equal(await page.frameLocator("#vixo-agents-codex-frame").getByRole("heading", { name: "合成 Docs 內容" }).isVisible(), true);
   checks.push("isolated sandbox frame becomes visibly ready (mock frame loader, not desktop E2E)");

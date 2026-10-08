@@ -44,7 +44,7 @@ const server=createServer(async(req,res)=>{
  }
  const file=url.pathname==='/'?'index.html':url.pathname.slice(1);
  if(file.includes('..'))return res.writeHead(404).end();
- const content=await readFile(path.join(web,file));res.writeHead(200,{'content-type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.json')?'application/json':'text/html'});res.end(content);
+ const content=await readFile(path.join(web,file));res.writeHead(200,{'content-type':(file.endsWith('.js')||file.endsWith('.mjs'))?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.json')?'application/json':'text/html'});res.end(content);
  }catch(error){send(res,500,{error:error.message});}
 });
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));

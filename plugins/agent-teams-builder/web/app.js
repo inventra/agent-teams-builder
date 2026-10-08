@@ -1,5 +1,6 @@
 import { createWorkbench } from "./workbench.js";
 import { icon } from "./icons.js";
+import { navigateDashboard, notifyEmbedReady } from "./embed-navigation.mjs";
 import { dashboardSessionMode, SYNC_LABELS, visibleLibrary, validateAccountInput, draftBundleTemplate, libraryWithAgentChildren } from "./workbench-model.js";
 
 document.querySelectorAll("[data-ui-icon]").forEach((element) => {
@@ -94,6 +95,7 @@ function renderGate(message="") {
   }
   gate.innerHTML=`<div class="gate-card"><div class="eyebrow">VIXO AGENT TEAMS</div><h1>${authMode==="register"?"申請 VIXO 帳號":"登入 VIXO"}</h1><p>${authMode==="register"?"新同仁可自行註冊，待管理員核准後使用。":"登入後，在這台裝置使用自己的本機與雲端 Agent、Skill、Workflow。"}</p>${credentialsForm(authMode)}<button id="auth-toggle" class="text-button">${authMode==="register"?"已有帳號？返回登入":"新同仁？註冊帳號"}</button><p class="gate-help">既有已連線的外掛請先設定帳號密碼，保留原本資料。忘記密碼請從已連線裝置或聯絡管理員處理。</p><a id="advanced-connect" href="/cloud.html?token=${encodeURIComponent(token)}">進階裝置連線</a></div>`;
   bindCredentials(authMode);$("#auth-toggle").onclick=()=>{if(!authBusy){authMode=authMode==="login"?"register":"login";renderGate();}};
+  $("#advanced-connect").onclick=event=>{event.preventDefault();navigateDashboard("/cloud.html",{token});};
 }
 async function logout() {
   clearPrivate();session=null;renderGate("正在登出…");
@@ -276,7 +278,6 @@ document.querySelector("#run-form").addEventListener("submit",async event=>{if(e
 document.querySelector("#schedule-form").addEventListener("submit",async event=>{if(event.submitter?.value==="cancel")return;event.preventDefault();const form=new FormData(event.currentTarget);try{await api("/api/schedules",{method:"POST",body:JSON.stringify(Object.fromEntries(form))});document.querySelector("#schedule-dialog").close();toast("排程已儲存");await load();}catch(error){toast(error.message);}});
 await checkSession(true);
 window.addEventListener("message",async event=>{if(event.source!==window.parent)return;const message=event.data;if(message?.type==="vixo-agents:thread-created"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({threadId:message.payload.threadId})});await load();}catch(error){toast(error.message);}}if(message?.type==="vixo-agents:thread-create-error"){try{await api(`/api/runs/${encodeURIComponent(message.payload.runId)}/native-result`,{method:"POST",body:JSON.stringify({error:message.payload.error})});}catch{}toast(message.payload.error||"無法建立 Codex 任務");await load();}});
-try { window.parent.postMessage({ type: "vixo-agents:ready" }, "*"); } catch {}
 setInterval(()=>{if(!document.hidden)void load();},5000);
 setInterval(()=>{if(!document.hidden&&!authBusy)void checkSession(true,false);},30000);
 window.addEventListener("focus",()=>{if(!authBusy)void checkSession(true);});
@@ -285,7 +286,7 @@ window.addEventListener("offline",()=>{if(usable()){clearPrivate();void checkSes
 window.addEventListener("online",()=>void checkSession(true));
 
 // The local bearer remains on this origin and is never sent to the cloud portal.
-document.getElementById("open-cloud").addEventListener("click", () => { if(!online())return;location.href = `/cloud.html?token=${encodeURIComponent(token)}`; });
+document.getElementById("open-cloud").addEventListener("click", () => { if(!online())return;navigateDashboard("/cloud.html",{token}); });
 
 $("#logout").onclick=logout;
 $("#sync-now").onclick=()=>synchronize(true);
@@ -361,3 +362,6 @@ function openDraftEditor(entry=null, saved=null) {
     });
   };
 }
+
+// Notify only after bootstrap and every interactive handler have been installed.
+notifyEmbedReady();

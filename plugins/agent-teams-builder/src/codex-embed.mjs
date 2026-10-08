@@ -393,7 +393,16 @@ function findFrameByName(frameTree, frameName) {
   return null;
 }
 
-async function dashboardDocument(dashboardUrl) {
+function dashboardPageUrl(dashboardUrl, pagePath = "/") {
+  if (!["/", "/cloud.html"].includes(pagePath)) throw new Error("Unsupported Dashboard page path");
+  const url = new URL(dashboardUrl);
+  if (!isLoopbackDashboardUrl(url.href)) throw new Error("Dashboard URL must use loopback HTTP(S)");
+  url.pathname = pagePath;
+  url.hash = "";
+  return url.href;
+}
+
+async function dashboardDocument(dashboardUrl, requestId) {
   const url = new URL(dashboardUrl);
   const response = await fetch(url, { cache: "no-store", signal: AbortSignal.timeout(3000) });
   if (!response.ok) throw new Error(`Dashboard returned HTTP ${response.status}`);
@@ -402,12 +411,12 @@ async function dashboardDocument(dashboardUrl) {
   const token = url.searchParams.get("token") || "";
   return html.replace(
     "<head>",
-    `<head><base href=${JSON.stringify(url.href)}><script>globalThis.__VIXO_AGENTS_EMBED_TOKEN__=${JSON.stringify(token)};</script>`,
+    `<head><base href=${JSON.stringify(url.href)}><script>globalThis.__VIXO_AGENTS_EMBED_TOKEN__=${JSON.stringify(token)};globalThis.__VIXO_AGENTS_EMBED_REQUEST_ID__=${JSON.stringify(requestId)};</script>`,
   );
 }
 
 async function loadDashboardFrame(connection, frameName, dashboardUrl) {
-  const html = await dashboardDocument(dashboardUrl);
+  const html = await dashboardDocument(dashboardUrl, frameName);
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const { frameTree } = await connection.send("Page.getFrameTree");
@@ -429,7 +438,7 @@ export async function reconcileDashboardFrame(record, dashboardUrl, {
   record.status = status;
   if (status?.pageVisible && !status.frameLoaded && status.frameName
     && record.loadedFrameName !== status.frameName) {
-    await loadFrame(record.connection, status.frameName, dashboardUrl);
+    await loadFrame(record.connection, status.frameName, dashboardPageUrl(dashboardUrl, status.framePath));
     record.loadedFrameName = status.frameName;
     return true;
   }
@@ -465,7 +474,7 @@ async function injectTarget(target, dashboardUrl, source, sourceHash, shouldOpen
     while (Date.now() < deadline) {
       status = await injectionStatus(connection);
       if (shouldOpen && status?.pageVisible && status.frameName && loadedFrameName !== status.frameName) {
-        await loadDashboardFrame(connection, status.frameName, dashboardUrl);
+        await loadDashboardFrame(connection, status.frameName, dashboardPageUrl(dashboardUrl, status.framePath));
         loadedFrameName = status.frameName;
       }
       if ((status?.entryVisible ?? status?.entryMounted) && (!shouldOpen || (status.pageVisible && status.frameLoaded))) break;
@@ -484,7 +493,7 @@ export function sourceBundle({ injectionPath = injectionFile, webDirectory = pat
   // the new daemon sees the same injector hash and keeps the old module state.
   const fingerprint = crypto.createHash("sha256").update(source).update("\0");
   const assets = fs.readdirSync(webDirectory, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.(?:html|css|js|json)$/.test(entry.name))
+    .filter((entry) => entry.isFile() && /\.(?:html|css|m?js|json)$/.test(entry.name))
     .map((entry) => entry.name).sort();
   for (const name of assets) fingerprint.update(name).update("\0")
     .update(fs.readFileSync(path.join(webDirectory, name))).update("\0");

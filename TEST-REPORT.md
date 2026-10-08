@@ -2,6 +2,14 @@
 
 測試日期：2026-10-08（Asia/Taipei）；下方歷史版本各自保留原驗證範圍。
 
+## v1.12.0 雲端管理頁內嵌切換修正
+
+- 使用者回報 Codex 內點「團隊與雲端管理」後顯示封鎖畫面。一般 Chromium 可完成舊版跳轉，未在真實 Codex 取得封鎖事件；已確認舊按鈕會讓 opaque iframe 直接導向 loopback 網址，與首頁的文件載入方式不同。
+- 首頁、進階連線、雲端管理及返回入口統一使用固定頁面清單的內嵌載入流程；每次切換建立新 frame，只有目前 frame 的 request ID 可確認載入完成。雲端頁直接取得注入的本地憑證，不依賴 sandbox sessionStorage。12 秒未完成時提供手動重新載入，避免無限重載表單；sandbox 權限未放寬。
+- 本次 Node 回歸通過（live Codex CDP 測試維持 SKIP），涵蓋導頁 allowlist、憑證與 ready 訊息，以及 `.mjs` 更新後的頁面重新載入。另有雲端管理與首頁瀏覽器 fixtures 通過，以及 7 組隔離側欄點擊回歸。
+- `npm run test:embed-lifecycle` 6 組隔離 Chromium 測試通過：登入 gate、已核准 Docs、宿主頁面替換、連續重載、首頁／雲端管理往返、載入超時手動重試。確認 bearer 可讀雲端帳號狀態、舊 ready 與非允許路徑被拒、往返不再產生 iframe HTTP 文件跳轉。修正前新導航斷言失敗，修正後通過。
+- 隔離回歸使用合成帳號資料與真正的本機頁面程式；不能代替使用者在 Codex 中重新點擊後的實機確認。此修正不變更 Supabase schema、帳密、Agent SOP 或 M365 同步資料。
+
 ## v1.12.0 本地與雲端資料庫
 
 - 本機全套 Node 測試：191 PASS、0 FAIL、1 SKIP（根目錄 78、Plugin 113 通過；原有需 live Codex CDP 的測試維持 SKIP）。涵蓋登入 gate、帳號隔離、排程／執行準備途中換帳號拒絕、持久佇列、跨 process 鎖與 crash recovery。
