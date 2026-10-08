@@ -1,0 +1,15 @@
+{
+  "id": "receipt-query-range",
+  "title": "依日期區間查詢收據",
+  "tags": [
+    "查詢收據",
+    "收據查詢"
+  ],
+  "intent_pattern": "(?:查詢|查找|搜尋).*收據|收據.*(?:查詢|查找|搜尋)",
+  "status": "needs_calibration",
+  "entrypoint": "run.py",
+  "action": "query",
+  "blocked_reason": "缺少日期區間查詢影片或已校準畫面。現有程式只支援單別＋單號，不支援日期欄、收據篩選與多筆結果擷取。",
+  "source": "source.json",
+  "schema": "input.schema.json"
+}

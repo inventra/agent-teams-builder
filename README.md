@@ -38,6 +38,10 @@
 - Play 可選擇「遇核准節點暫停」或「本次自動核准」；等待資料與等待核准會分開顯示，並可在 Dashboard 原 Session 續跑。
 - Codex 仍可改選「背景 CLI 執行」；Claude Code 與排程使用已登入的宿主 CLI，不另外調用模型 API。
 
+## 共用 Skill：ERP 影片自動化工坊
+
+Plugin 隨附 `erp-video-automation`（影片整理、標籤、完整輸入表單與執行 gate）及其相依技能 `expense-claim-helper`（Windows Cosmos ERP 收據請款）。更新 VIXO 後開新 Session 即可由宿主使用；共用技能不會自動修改個別員工的 SOP。範例資料庫、使用方式、Windows 需求與尚未校準的日期區間查詢，請見 [ERP 共用技能說明](docs/ERP-VIDEO-AUTOMATION.md)。
+
 ## v1.7.0：Docs 工作台
 
 VIXO 預設開啟新的 Docs 工作台，保留原本的員工總覽及每位員工入口：

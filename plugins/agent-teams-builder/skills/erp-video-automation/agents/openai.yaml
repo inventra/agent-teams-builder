@@ -1,0 +1,4 @@
+interface:
+  display_name: "ERP 影片自動化工坊"
+  short_description: "把 ERP 錄影整理成獨立程式、標籤與輸入表單，欄位完整後才執行"
+  default_prompt: "請使用 $erp-video-automation，將我提供的 ERP 影片轉成有標籤、完整輸入表單及驗證流程的自動化。"

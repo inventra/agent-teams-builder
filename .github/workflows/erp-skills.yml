@@ -1,0 +1,35 @@
+name: ERP shared skills offline tests
+
+on:
+  push:
+    paths:
+      - 'plugins/agent-teams-builder/skills/erp-video-automation/**'
+      - 'plugins/agent-teams-builder/skills/expense-claim-helper/**'
+      - '.github/workflows/erp-skills.yml'
+  pull_request:
+    paths:
+      - 'plugins/agent-teams-builder/skills/erp-video-automation/**'
+      - 'plugins/agent-teams-builder/skills/expense-claim-helper/**'
+      - '.github/workflows/erp-skills.yml'
+
+jobs:
+  offline:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Input gate and video intake
+        working-directory: plugins/agent-teams-builder/skills/erp-video-automation/scripts
+        run: python -B -m unittest test_dispatch test_video_intake
+      - name: ERP executor with fake desktop
+        working-directory: plugins/agent-teams-builder/skills/expense-claim-helper/scripts
+        run: python -B -m unittest test_erp_native
+      - name: Relocated skill discovery and input gate
+        working-directory: plugins/agent-teams-builder/skills/erp-video-automation/assets/automation-library/receipt-create-20260910
+        run: python -B -m unittest test_run

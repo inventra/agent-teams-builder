@@ -1,0 +1,4 @@
+# Work in a separate user library; never publish live inputs or evidence.
+runs/
+**/media/
+*.input.json

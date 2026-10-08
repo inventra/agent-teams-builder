@@ -1,0 +1,4 @@
+interface:
+  display_name: "請款小幫手"
+  short_description: "優先用本機程式操作 ERP 請款、辨識額外視窗與查回核對，降低逐步操作成本"
+  default_prompt: "請使用 $expense-claim-helper，優先以程式依我提供的資料在 ERP 建立請款單、儲存並查回核對。"

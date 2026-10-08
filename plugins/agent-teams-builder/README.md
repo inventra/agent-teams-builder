@@ -9,3 +9,5 @@
 - 不使用 Anthropic API、OpenAI API 或獨立 Agent SDK 呼叫。
 
 安裝、相容性與完整使用方法請見壓縮包根目錄的 `README-安裝說明.md`。
+
+Plugin 另隨附共用 `erp-video-automation` 與 `expense-claim-helper`，供宿主處理 ERP 影片與 Windows 收據請款。完整程式及空白資料庫範本隨技能分發，個別員工 SOP 不會自動變更。請見 [ERP 共用技能說明](../../docs/ERP-VIDEO-AUTOMATION.md)。

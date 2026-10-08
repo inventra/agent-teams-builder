@@ -1,0 +1,22 @@
+{
+  "id": "receipt-create-20260910",
+  "title": "建立收據請款",
+  "tags": [
+    "Key收據",
+    "收據",
+    "新增收據",
+    "建立收據"
+  ],
+  "intent_pattern": "(?:key|新增|建立|輸入)[^，,。；;]{0,40}收據",
+  "status": "ready",
+  "entrypoint": "run.py",
+  "action": "create",
+  "validation": {
+    "executor": "expense-claim-helper",
+    "version": "iGP2.0 16.0.2.1",
+    "evidence": "2026-09-10 單次執行建立、儲存、查回及模型核對成功；2026-09-17 新輸入閘門離線測試",
+    "scope": "單筆 NTD 員工轉帳收據，無收據號碼"
+  },
+  "source": "source.json",
+  "schema": "input.schema.json"
+}

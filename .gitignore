@@ -7,3 +7,5 @@ outputs/
 .codex-build/
 .codex-finalizer/
 docs/screenshots/
+__pycache__/
+*.py[cod]

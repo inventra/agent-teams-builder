@@ -1,0 +1,85 @@
+{
+  "contract_version": 1,
+  "fields": [
+    {
+      "name": "company",
+      "label": "公司全名",
+      "type": "string",
+      "required": true,
+      "help": ""
+    },
+    {
+      "name": "document_type",
+      "label": "單別",
+      "type": "string",
+      "required": true,
+      "help": "",
+      "enum": [
+        "I502"
+      ]
+    },
+    {
+      "name": "date_basis",
+      "label": "日期依據",
+      "type": "string",
+      "required": true,
+      "help": "單據日期、請款日期或預計付款日，必須明確選擇。",
+      "enum": [
+        "document_date",
+        "claim_date",
+        "payment_date"
+      ]
+    },
+    {
+      "name": "start_date",
+      "label": "開始日期",
+      "type": "date",
+      "required": true,
+      "help": ""
+    },
+    {
+      "name": "end_date",
+      "label": "結束日期",
+      "type": "date",
+      "required": true,
+      "help": ""
+    },
+    {
+      "name": "voucher",
+      "label": "憑證類別",
+      "type": "string",
+      "required": true,
+      "help": "",
+      "enum": [
+        "receipt"
+      ]
+    },
+    {
+      "name": "applicant",
+      "label": "申請人篩選",
+      "type": "string",
+      "required": true,
+      "help": "查全部申請人請明確留空。",
+      "allow_empty": true
+    }
+  ],
+  "rules": [
+    {
+      "kind": "date_order",
+      "start": "start_date",
+      "end": "end_date"
+    }
+  ],
+  "outputs": [
+    "matched_rows",
+    "count",
+    "totals",
+    "date_filter_evidence",
+    "pagination_complete"
+  ],
+  "preconditions": [
+    "尚須查詢影片或唯讀現場校準",
+    "查詢結果含雙端日期",
+    "不得用單號前綴代替日期篩選"
+  ]
+}

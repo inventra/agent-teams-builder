@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "id": "receipt-create-20260910",
+  "title": "建立收據請款",
+  "candidate_tags": [
+    "Key收據"
+  ],
+  "source_size_bytes": 12753364,
+  "sha256": "77cf67082ab9a13f6d39fb2815e83ebb449e811edd7b675d3a69d41fc7cde0b8",
+  "created_at": "2026-09-17T02:27:33.888434+00:00",
+  "video_metadata": {
+    "probe_status": "probed",
+    "backend": "PyAV",
+    "duration_seconds": 215.7445,
+    "width": 1920,
+    "height": 1080,
+    "fps": 16.00040788988827,
+    "provenance": "2026-09-17 isolated real-video extraction test: 2 frames, one contact sheet; no ERP actions"
+  },
+  "extraction": {
+    "no_frames": true,
+    "start_seconds": 0.0,
+    "end_seconds": null,
+    "interval_seconds": 10.0,
+    "max_frames": 36,
+    "frame_count": 0,
+    "limit_reached": false
+  },
+  "frames": [],
+  "contact_sheets": [],
+  "review_status": "reviewed_using_2026-09-10_analysis_and_verified_executor"
+}

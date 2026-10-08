@@ -1,0 +1,28 @@
+{
+  "execution_mode": null,
+  "company": null,
+  "document_type": null,
+  "document_date": null,
+  "claim_date": null,
+  "applicant": null,
+  "counterparty": null,
+  "department": null,
+  "factory": null,
+  "currency": null,
+  "rate": null,
+  "bank_code": null,
+  "bank_account": null,
+  "payment_date": null,
+  "payment_condition": null,
+  "cash_date": null,
+  "note": null,
+  "receipt_count": null,
+  "detail": {
+    "expense_code": null,
+    "summary": null,
+    "amount": null,
+    "voucher": null,
+    "receipt_number": null,
+    "project": null
+  }
+}
